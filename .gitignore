@@ -1,0 +1,21 @@
+# Reference clones (studied, never committed)
+/references/
+
+# Downloaded toolchain + SDK (fetched by the build)
+/telink_tools/
+/downloads/
+
+# Build outputs
+/build/
+*.o
+*.d
+*.elf
+*.lst
+*.bin
+*.ota
+sizedummy
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+*.swp
