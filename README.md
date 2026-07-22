@@ -21,5 +21,11 @@ so no IDE and no GUI step is required. Builds run in Docker locally and in
 GitHub Actions; release binaries (`.bin` + `.ota`) are published as GitHub
 Release assets.
 
-Full toolchain, flashing, wiring, pairing, OTA and binding docs will be filled
-in as the milestones land.
+## Flashing
+
+See **[FLASHING.md](FLASHING.md)** for exact Raspberry Pi (4B / CM4) wiring —
+which pad goes to which GPIO, the single-wire SWS resistor rig, the required Pi
+UART setup, and the `flash.sh` / `debug.sh` steps.
+
+Remaining docs (pairing, OTA, binding, flash map, gesture table, tuning guide)
+are filled in as the milestones land.

@@ -17,6 +17,8 @@
 #
 # Wiring / tunables live in the CONFIG block below. TACT_MS and the GPIO line
 # are the two things most likely to need adjusting on your board — verify them.
+#
+# >>> EXACT Pi wiring + one-time Pi UART setup: see FLASHING.md <<<
 # ==============================================================================
 set -euo pipefail
 
