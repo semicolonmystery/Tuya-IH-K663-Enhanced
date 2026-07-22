@@ -73,10 +73,16 @@ GPIO*, so **remove the coin cell while flashing.**
   Pi pin 8  (GPIO14 TXD) ──[1 kΩ]──┬── SWS pad
   Pi pin 10 (GPIO15 RXD) ──────────┘
   Pi pin 6  (GND) ───────────────────  GND
-  Pi pin 1  (3V3) ───────────────────  +3V3 of the module
+  Pi pin 1  (3V3) ───────────────────  +3V3 (VCC) of the module
   Pi pin 11 (GPIO17) ────────────────  RESET pad
 ```
 `flash.sh` config: defaults (`RST_GPIO=17`).
+
+> **If your K663 breaks out pads labelled `SWS RST VCC GND RX TX`** (common):
+> use exactly this reset-mode wiring — `SWS`→rig, `RST`→pin 11, `VCC`→pin 1,
+> `GND`→pin 6. The `RX` pad is **not used**. The `TX` pad is the chip's debug
+> UART output — leave it disconnected while flashing; wire it for monitoring
+> (next section). With VCC on the 3V3 rail you can leave the coin cell out.
 
 ### Finding the pads on the K663
 You must locate, on your specific PCB: **SWS**, **GND**, **+3V3 (VCC)**, and a
@@ -162,8 +168,14 @@ Recovery if something goes wrong:
 The firmware prints debug on **PB1** (`DEBUG_TX_PIN` in `app_config.h`), TX-only,
 115200 8N1.
 
+If your board has a **TX** pad, that is the chip's UART TX — connect it to the
+Pi RXD. There's a good chance the TX pad **is** PB1 (the standard Telink/Tuya
+debug-TX pin), so it should Just Work. If you see nothing, the pad is a different
+GPIO — change the single `DEBUG_TX_PIN` define and rebuild. The board's **RX**
+pad is not needed (debug is TX-only).
+
 ```
-  K663 PB1 ─────────────  Pi RXD (pin 10, GPIO15)
+  K663 TX pad (≈PB1) ────  Pi RXD (pin 10, GPIO15)
   common GND
 ```
 
