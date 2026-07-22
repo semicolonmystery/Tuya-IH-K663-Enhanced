@@ -13,6 +13,9 @@
 
 #include "app_config.h"
 #include "zigbee_app.h"
+#include "buttons.h"
+#include "gestures.h"
+#include "led_effects.h"
 
 #define APP_ENDPOINT    1
 
@@ -183,6 +186,31 @@ static void led_boot_blink(void)
 }
 
 /* ---------------------------------------------------------------------------
+ * Gesture handling — for TEST 1, log each gesture and drive the LED effect.
+ * Cluster commands to bindings (F3) and Z2M publishing (F8) are wired in M4/M5;
+ * real pairing/OTA behaviour in M10/M11. The click-tick gives one blink per
+ * press "as they register"; the semantic click events drive actions later.
+ * ------------------------------------------------------------------------- */
+static void on_gesture(const gesture_event_t *e)
+{
+    printf("gesture=%s dur=%d\n", gesture_name(e->id), (int)e->duration_ms);
+
+    switch (e->id) {
+    case G_CLICK_TICK:        led_blink(1);                    break;
+    case G_SINGLE_HOLD_START: led_ramp(LED_RAMP_LEVEL_MS, 1);  break;
+    case G_DOUBLE_HOLD_START: led_ramp(LED_RAMP_CT_MS, 1);     break;
+    case G_TRIPLE_HOLD_START: led_ramp(LED_RAMP_TRIPLE_MS, 1); break;
+    case G_SINGLE_HOLD_STOP:
+    case G_DOUBLE_HOLD_STOP:
+    case G_TRIPLE_HOLD_STOP:
+    case G_STUCK:             led_stop();                      break;
+    case G_RESET:             led_pair();                      break;
+    case G_OTA_TRIGGER:       led_pulse(LED_OTA_PULSE_MS);     break;
+    default:                                                   break;
+    }
+}
+
+/* ---------------------------------------------------------------------------
  * Init
  * ------------------------------------------------------------------------- */
 static void app_stack_init(void)
@@ -207,7 +235,7 @@ void user_init(bool isRetention)
 {
     if (!isRetention) {
         led_boot_blink();
-        printf("\n== IH-K663 boot (M1) model=%s ==\n", APP_MODEL_ID);
+        printf("\n== IH-K663 boot model=%s ==\n", APP_MODEL_ID);
     }
 
 #if PM_ENABLE
@@ -215,6 +243,11 @@ void user_init(bool isRetention)
 #endif
 
     if (!isRetention) {
+        /* Local input + feedback (works with or without a network). */
+        led_init();
+        gestures_init(on_gesture);
+        buttons_init();
+
         app_stack_init();
         app_zb_init();
 

@@ -29,6 +29,13 @@
 #define BUTTON_PIN                GPIO_PC2 /* active-low, internal pull-up      */
 #define LED_PIN                   GPIO_PC4 /* active-high                       */
 
+/* LED is driven by hardware PWM for brightness ramps (F6). PC4 maps to PWM3 in
+ * the TLSR8258 GPIO mux (same channel sampleLight uses on PD2). If the LED does
+ * not fade on hardware, PC4 likely muxes to a different channel — change this
+ * pair together (e.g. PWM4_ID / AS_PWM4). */
+#define LED_PWM_ID                PWM3_ID
+#define LED_PWM_FUNC              AS_PWM3
+
 /* Debug UART: TX-only, user solders one wire here. PB1 is free on this part.
  * VERIFY on hardware before soldering; single #define to change.             */
 #define DEBUG_TX_PIN              GPIO_PB1
@@ -45,6 +52,7 @@
  * F1 — Wake & debounce
  * ========================================================================== */
 #define DEBOUNCE_MS               20       /* (20)                              */
+#define BUTTON_SAMPLE_MS          10       /* (10) debounce/gesture tick period */
 
 /* ============================================================================
  * F2 — Gesture engine timing
@@ -82,6 +90,8 @@
 #define LED_BLINK_MS              100      /* (100) single click blink          */
 #define LED_PAIR_BLINK_MS         200      /* (200) pairing fast blink          */
 #define LED_OTA_PULSE_MS          1000     /* (1000) OTA slow pulse             */
+#define LED_STEP_MS               20       /* (20) PWM update tick for ramps    */
+#define LED_PWM_HZ                1000     /* (1000) PWM carrier frequency      */
 
 /* ============================================================================
  * F7 — Battery

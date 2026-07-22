@@ -42,6 +42,27 @@ build it and the ordered milestones.
 
 ---
 
+## Test grouping — 3 flashes total (user flashes only at these points)
+
+The user flashes/observes at **3 checkpoints**, each a coherent, fully-building
+release. Work proceeds continuously; a checkpoint is presented only when its
+whole group is done and verified building.
+
+- **TEST 1 — "Functional remote" (awake).** M2 + M3 + M4 + M5 + M9 + M10 + M12.
+  Device pairs to Z2M, the full gesture matrix is recognised with distinct LED
+  effects, gestures drive bound lights (Toggle / Level Move / CT Move) *and*
+  publish `action`/`action_duration`, battery is reported. **No deep sleep yet**
+  so it's easy to observe on bench power. Confirmed by the Z2M converter.
+- **TEST 2 — "Sleep + reconnect" (the two past failure modes).** M6 + M7 + M8.
+  Deep sleep with retention + wake integrity, stack-driven rejoin/reparent tuned
+  for battery, offline action cache. Tested together because they interact
+  (reparent test needs "asleep between attempts").
+- **TEST 3 — "OTA + polish".** M11 + final docs/acceptance. Manual-trigger OTA
+  session that completes from Z2M, flash map, README completion, acceptance run.
+
+M1 (build/skeleton) and M13 (flashing tooling) are already done and were the
+implicit "test 0".
+
 ## Milestones
 
 - [x] **M0 — Investigation & scaffolding.** Environment settled (Docker build,
