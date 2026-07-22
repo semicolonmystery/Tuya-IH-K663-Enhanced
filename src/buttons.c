@@ -25,6 +25,15 @@ static int button_tick(void *arg)
 {
     u8 raw = read_pressed();
 
+#if DEBUG_UART_ENABLED
+    /* Diagnostics (remove after bring-up): prove the tick runs and the pin
+     * responds. `btn_raw=` prints on each edge; `hb` is a ~3 s heartbeat. */
+    static u8  s_dbg_raw = 0xff;
+    static u16 s_hb;
+    if (raw != s_dbg_raw) { s_dbg_raw = raw; printf("btn_raw=%d\n", raw); }
+    if (++s_hb >= 300) { s_hb = 0; printf("hb btn=%d\n", raw); }
+#endif
+
     if (raw == s_committed) {
         s_cand = raw;
         s_cand_ms = 0;

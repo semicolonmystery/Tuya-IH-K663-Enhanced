@@ -29,12 +29,10 @@
 #define BUTTON_PIN                GPIO_PC2 /* active-low, internal pull-up      */
 #define LED_PIN                   GPIO_PC4 /* active-high                       */
 
-/* LED is driven by hardware PWM for brightness ramps (F6). PC4 maps to PWM3 in
- * the TLSR8258 GPIO mux (same channel sampleLight uses on PD2). If the LED does
- * not fade on hardware, PC4 likely muxes to a different channel — change this
- * pair together (e.g. PWM4_ID / AS_PWM4). */
-#define LED_PWM_ID                PWM3_ID
-#define LED_PWM_FUNC              AS_PWM3
+/* LED is driven by hardware PWM for brightness ramps (F6). PC4's GPIO mux
+ * exposes PWM2 and PWM0_N (verified on the K663 silkscreen/mux), so PWM2. */
+#define LED_PWM_ID                PWM2_ID
+#define LED_PWM_FUNC              AS_PWM2
 
 /* Debug UART: TX-only, user solders one wire here. PB1 is free on this part.
  * VERIFY on hardware before soldering; single #define to change.             */

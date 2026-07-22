@@ -410,12 +410,10 @@ void user_init(bool isRetention)
 #endif
 
     if (!isRetention) {
-        /* Local input + feedback (works with or without a network). */
+        /* Hardware + non-timer init. */
         led_init();
         gestures_init(on_gesture);
-        buttons_init();
         battery_init();
-        TL_ZB_TIMER_SCHEDULE(battery_timer_cb, NULL, BATTERY_MEASURE_MIN_INTERVAL_S * 1000);
 
         app_stack_init();
         app_zb_init();
@@ -423,6 +421,12 @@ void user_init(bool isRetention)
         u8 repower = drv_pm_deepSleep_flag_get() ? 0 : 1;
         bdb_init((af_simple_descriptor_t *)&app_simpleDesc,
                  &g_bdbCommissionSetting, &g_appBdbCb, repower);
+
+        /* Periodic app timers MUST be scheduled after bdb_init(): stack init
+         * calls ev_timer_init() which memset-wipes the whole timer pool, so any
+         * timer created earlier would silently never fire. */
+        buttons_init();
+        TL_ZB_TIMER_SCHEDULE(battery_timer_cb, NULL, BATTERY_MEASURE_MIN_INTERVAL_S * 1000);
     } else {
         mac_phyReconfig();
     }
