@@ -104,8 +104,13 @@ build it and the ordered milestones.
 - [ ] **M12 — Z2M converter (F12).** `ts0041-cus.js` with exact `action` values,
   `action_duration`, battery, `ota: true`, `configure` bindings/reporting.
 
-- [ ] **M13 — Flashing/debug tooling.** `flash.sh` (Pi CM4, GPIO-driven SWS
-  activation via TlsrComSwireWriter: backup/app/erase/restore/check) + `debug.sh`.
+- [x] **M13 — Flashing/debug tooling.** *(pulled forward — unblocks hardware
+  testing of every later milestone.)* `flash.sh` (Pi CM4, GPIO-driven SWS
+  activation via TlsrComSwireWriter `TLSR825xComFlasher.py`:
+  backup/app/erase/restore/check; auto-sudo; RST_GPIO preferred, PWR_GPIO
+  fallback; tunable `TACT_MS`) + `debug.sh` (115200 8N1 TX monitor). Syntax
+  verified; GPIO/serial behaviour must be confirmed on the Pi. Assumes libgpiod
+  v2 (Bookworm).
 
 - [ ] **M14 — Docs & acceptance.** README: toolchain, build, flashing/wiring,
   pairing, OTA, binding, flash map, F8 gesture code table, `app_config.h` tuning
