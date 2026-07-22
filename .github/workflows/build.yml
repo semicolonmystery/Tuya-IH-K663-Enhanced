@@ -1,0 +1,107 @@
+name: build
+
+# Builds the firmware headlessly (same `make` as local Docker builds; the
+# CI runner is Linux x86_64 so it runs the downloaded TC32 toolchain directly).
+# On every push/PR: build + upload artifacts. On a v* tag: also publish a
+# GitHub Release with the .bin/.ota and refresh the Zigbee2MQTT OTA index.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  MODEL_ID: TS0041-CUS
+  MANUFACTURER_NAME: _TZ3000_fa9mlvja-CUS
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends make curl unzip tar bzip2 python3
+
+      - name: Version numbers
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "version_str=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version_str=0.0.0+${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+          # APP_BUILD is one byte of FILE_VERSION; keep it in range.
+          echo "app_build=$(( GITHUB_RUN_NUMBER % 256 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          make tools
+          make all APP_BUILD=${{ steps.ver.outputs.app_build }} VERSION_STR=${{ steps.ver.outputs.version_str }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: build/bin/*
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends make curl unzip tar bzip2 python3
+
+      - name: Build release firmware
+        run: |
+          make tools
+          make all APP_BUILD=$(( GITHUB_RUN_NUMBER % 256 )) VERSION_STR=${GITHUB_REF_NAME}
+
+      - name: Create GitHub Release with firmware assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            build/bin/ih-k663.bin build/bin/ih-k663.ota \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Automated firmware build for ${GITHUB_REF_NAME}." \
+            --repo "${GITHUB_REPOSITORY}"
+
+      - name: Update Zigbee2MQTT OTA index
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/ih-k663.ota"
+          mkdir -p zigbee2mqtt/ota
+          python3 tools/make_ota_index.py build/bin/ih-k663.ota \
+            --url "$URL" --model-id "${MODEL_ID}" \
+            --manufacturer-name "${MANUFACTURER_NAME}" \
+            --out zigbee2mqtt/ota/index.json
+
+      - name: Attach OTA index to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" zigbee2mqtt/ota/index.json --repo "${GITHUB_REPOSITORY}"
+
+      - name: Commit refreshed OTA index to main
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          cp zigbee2mqtt/ota/index.json /tmp/index.json
+          git stash --include-untracked || true
+          mkdir -p zigbee2mqtt/ota && cp /tmp/index.json zigbee2mqtt/ota/index.json
+          if ! git diff --quiet -- zigbee2mqtt/ota/index.json; then
+            git add zigbee2mqtt/ota/index.json
+            git commit -m "ci: update OTA index for ${GITHUB_REF_NAME}"
+            git push origin main
+          else
+            echo "OTA index unchanged."
+          fi

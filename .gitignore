@@ -19,3 +19,4 @@ sizedummy
 .DS_Store
 Thumbs.db
 *.swp
+build.log

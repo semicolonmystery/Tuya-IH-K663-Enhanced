@@ -1,0 +1,9 @@
+# Keep LF endings everywhere — CRLF breaks shell scripts and Makefiles in
+# Docker/Linux/CI builds. Source is authored and built on Linux.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.bin binary
+*.ota binary
+*.bz2 binary
+*.zip binary
