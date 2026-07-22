@@ -166,6 +166,23 @@ static void app_zclProcessIncomingMsg(zclIncoming_t *pInMsg)
 }
 
 /* ---------------------------------------------------------------------------
+ * Boot heartbeat — 3 quick blinks on the LED so there's a visible sign of life
+ * without needing the debug UART wired. The real non-blocking effect engine
+ * (F6) replaces this in M2.
+ * ------------------------------------------------------------------------- */
+static void led_boot_blink(void)
+{
+    drv_gpio_func_set(LED_PIN);
+    drv_gpio_output_en(LED_PIN, 1);
+    for (u8 i = 0; i < 3; i++) {
+        drv_gpio_write(LED_PIN, 1);   /* active-high: on */
+        WaitMs(120);
+        drv_gpio_write(LED_PIN, 0);
+        WaitMs(120);
+    }
+}
+
+/* ---------------------------------------------------------------------------
  * Init
  * ------------------------------------------------------------------------- */
 static void app_stack_init(void)
@@ -189,6 +206,7 @@ static void app_zb_init(void)
 void user_init(bool isRetention)
 {
     if (!isRetention) {
+        led_boot_blink();
         printf("\n== IH-K663 boot (M1) model=%s ==\n", APP_MODEL_ID);
     }
 
