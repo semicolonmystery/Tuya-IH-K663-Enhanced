@@ -7,7 +7,7 @@ manufacturer code / image type / file version, hashes the file, and emits a
 one-element JSON index array that Z2M can consume via an index override.
 
   make_ota_index.py <in.ota> --url <download-url> \
-      --model-id TS0041-CUS --manufacturer-name _TZ3000_fa9mlvja-CUS \
+      --model-id TS0041-Enhanced --manufacturer-name _TZ3000_fa9mlvja-Enhanced \
       [--out index.json]
 """
 import argparse

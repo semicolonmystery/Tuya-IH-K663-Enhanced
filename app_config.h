@@ -16,8 +16,8 @@
  * Identity (Z2M fingerprints on exactly these — keep as defines)
  * Stock device was TS0041 / _TZ3000_fa9mlvja.
  * ========================================================================== */
-#define APP_MODEL_ID              "TS0041-CUS"
-#define APP_MANUFACTURER_NAME     "_TZ3000_fa9mlvja-CUS"
+#define APP_MODEL_ID              "TS0041-Enhanced"
+#define APP_MANUFACTURER_NAME     "_TZ3000_fa9mlvja-Enhanced"
 
 /* OTA / manufacturer identity. 0x1141 is Telink's Zigbee manufacturer code. */
 #define APP_MANUFACTURER_CODE     0x1141
@@ -47,6 +47,9 @@
 /* Battery sensing: use the TLSR8258 internal supply-rail ADC path (no divider).
  * Fallback to an external ADC channel only if the internal path is unusable.  */
 #define BATTERY_USE_EXTERNAL_ADC  0        /* (0)                               */
+/* Detection IO for the internal VBAT ADC path (must be a floating pad). PB5 is
+ * romasku's choice for this exact device; verify on your PCB. */
+#define BATTERY_ADC_PIN           GPIO_PB5
 
 /* ============================================================================
  * F1 — Wake & debounce

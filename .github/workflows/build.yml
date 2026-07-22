@@ -16,8 +16,8 @@ permissions:
   contents: write
 
 env:
-  MODEL_ID: TS0041-CUS
-  MANUFACTURER_NAME: _TZ3000_fa9mlvja-CUS
+  MODEL_ID: TS0041-Enhanced
+  MANUFACTURER_NAME: _TZ3000_fa9mlvja-Enhanced
 
 jobs:
   build:

@@ -157,7 +157,7 @@ export PWR_GPIO=17 RST_GPIO=""    # (skip this line if using a reset pad)
 
 **Expected after `app -r`:** the LED blinks **3×** and, if the debug wire is
 connected (next section), the UART prints
-`== IH-K663 boot (M1) model=TS0041-CUS ==`.
+`== IH-K663 boot model=TS0041-Enhanced ==`.
 
 Recovery if something goes wrong:
 ```bash

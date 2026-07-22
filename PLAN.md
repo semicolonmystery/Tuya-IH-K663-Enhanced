@@ -29,7 +29,7 @@ build it and the ordered milestones.
   Downloaded SDK/toolchain live in `telink_tools/` (gitignored).
 
 ## Identity (defines; Z2M fingerprints on these)
-- `modelIdentifier = "TS0041-CUS"`, `manufacturerName = "_TZ3000_fa9mlvja-CUS"`.
+- `modelIdentifier = "TS0041-Enhanced"`, `manufacturerName = "_TZ3000_fa9mlvja-Enhanced"`.
 - Stock was `TS0041` / `_TZ3000_fa9mlvja`.
 
 ## Fixed hardware map
@@ -78,22 +78,22 @@ implicit "test 0".
   GitHub Release with the assets and refreshes the Z2M OTA index. Verified
   building in Docker locally.
 
-- [ ] **M2 — Board/HAL: button, LED, debug UART.** Fixed pinout. `buttons.c/h`
+- [x] **M2 — Board/HAL: button, LED, debug UART.** Fixed pinout. `buttons.c/h`
   debounced sampler with **wake-press integrity (F1)**. `led_effects.c/h`
   non-blocking effect engine (F6, PWM vs soft-PWM documented). Debug UART TX.
   Battery module stub. Boots → button edges logged, LED blinks.
 
-- [ ] **M3 — Gesture engine (F2/F3a/F4-stuck).** `gestures.c/h` click+hold state
+- [x] **M3 — Gesture engine (F2/F3a/F4-stuck).** `gestures.c/h` click+hold state
   machine: single/double/triple click & hold, `MULTI_CLICK_WINDOW_MS`,
   `HOLD_MS`, hold duration, direction-flip flags in retained RAM, stuck-button
   cap. Drives the LED ramp variants (F6). Emits gesture events (no radio yet).
 
-- [ ] **M4 — Zigbee app core + endpoints.** `zigbee_app.c/h`: endpoint 1, HA
+- [x] **M4 — Zigbee app core + endpoints.** `zigbee_app.c/h`: endpoint 1, HA
   profile. Server: Basic, Identify, Power Config, Multistate Input (0x0012) +
   Analog Input (0x000C) for gesture publishing (F8). Client: On/Off, Level,
   Color, Identify, OTA. Identity defines. Network-state logging.
 
-- [ ] **M5 — Actions & cluster commands (F3/F3a).** Gesture→command mapping over
+- [x] **M5 — Actions & cluster commands (F3/F3a).** Gesture→command mapping over
   the **binding table only** (Toggle / Level Move+Stop / Color-temp Move+Stop),
   publish `action`/`action_duration` via Multistate/Analog Input. `BINDING_TABLE_SIZE` (16).
 
@@ -111,18 +111,18 @@ implicit "test 0".
   signed Level accumulator→Step, signed CT accumulator→Step), `ACTION_CACHE_MAX`
   (10), flush oldest-first as a handful of messages.
 
-- [ ] **M9 — Battery reporting (F7).** Internal ADC vbat, coin-cell discharge LUT
+- [x] **M9 — Battery reporting (F7).** Internal ADC vbat, coin-cell discharge LUT
   + interpolation, PowerConfig BatteryVoltage/PercentageRemaining, measure/report
   intervals, sample when radio idle.
 
-- [ ] **M10 — Pairing / factory reset (F10).** `RESET_CLICK_COUNT` (10) rapid
+- [x] **M10 — Pairing / factory reset (F10).** `RESET_CLICK_COUNT` (10) rapid
   clicks → leave + clear + steering for `PAIR_WINDOW_MS` with pairing LED.
   Steering only via this gesture.
 
 - [ ] **M11 — OTA (F11).** SDK OTA client, trigger = 4 clicks + 5 s hold, flash
   map documented, OTA image via SDK tooling (`tl_check_fw.sh`), Z2M OTA index JSON.
 
-- [ ] **M12 — Z2M converter (F12).** `ts0041-cus.js` with exact `action` values,
+- [x] **M12 — Z2M converter (F12).** `ts0041-enhanced.js` with exact `action` values,
   `action_duration`, battery, `ota: true`, `configure` bindings/reporting.
 
 - [x] **M13 — Flashing/debug tooling.** *(pulled forward — unblocks hardware

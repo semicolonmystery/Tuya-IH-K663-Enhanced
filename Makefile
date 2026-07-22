@@ -86,7 +86,8 @@ APP_SOURCES := \
 	$(SRC_DIR)/zigbee_app.c \
 	$(SRC_DIR)/buttons.c \
 	$(SRC_DIR)/gestures.c \
-	$(SRC_DIR)/led_effects.c
+	$(SRC_DIR)/led_effects.c \
+	$(SRC_DIR)/battery.c
 MAIN_SRC := $(SDK_PATH)/apps/common/main.c
 
 APP_OBJS := $(APP_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/app/%.o)

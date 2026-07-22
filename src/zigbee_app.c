@@ -1,14 +1,16 @@
 /********************************************************************************
- * zigbee_app.c — Zigbee application core for the IH-K663 (M1 skeleton).
+ * zigbee_app.c — Zigbee application core for the IH-K663.
  *
- * M1 goal: a sleepy-ED image that boots on the TLSR8258, initialises the stack,
- * registers endpoint 1 with our identity, and prints a banner on the debug UART.
- * Gestures, LED, battery, sleep, rejoin tuning and OTA arrive in later
- * milestones. Everything tunable lives in app_config.h.
+ * Endpoint 1 (HA): server Basic / Identify / Power Config / Multistate Input;
+ * client On/Off / Level / Color Control / Groups. Gestures drive bound lights
+ * (F3, binding-table only) and are published to the coordinator via Multistate
+ * Input (F8). Pairing/join via the reset gesture (F10). Battery via F7.
+ * All tunables live in app_config.h.
  ********************************************************************************/
 #include "tl_common.h"
 #include "zb_api.h"
 #include "zcl_include.h"
+#include "general/zcl_multistate_input.h"
 #include "bdb.h"
 
 #include "app_config.h"
@@ -16,15 +18,26 @@
 #include "buttons.h"
 #include "gestures.h"
 #include "led_effects.h"
+#include "battery.h"
 
 #define APP_ENDPOINT    1
 
+/* F8 action codes carried in Multistate Input presentValue (0x0055). */
+enum {
+    ACT_SINGLE_CLICK = 1, ACT_DOUBLE_CLICK, ACT_TRIPLE_CLICK,
+    ACT_SINGLE_HOLD_START, ACT_SINGLE_HOLD_STOP,
+    ACT_DOUBLE_HOLD_START, ACT_DOUBLE_HOLD_STOP,
+    ACT_TRIPLE_HOLD_START, ACT_TRIPLE_HOLD_STOP,
+};
+/* Manufacturer-specific attr on Multistate Input carrying the last hold
+ * duration (ms); reported immediately before a *_hold_stop (F8). */
+#define ATTR_HOLD_DURATION      0xF001
+
 /* ---------------------------------------------------------------------------
- * Identity — ZCL character strings are length-prefixed (first byte = length).
- * Kept in lock-step with the Z2M converter fingerprint (F12).
+ * Identity — length-prefixed ZCL strings (must match the Z2M fingerprint).
  * ------------------------------------------------------------------------- */
-static const u8 g_modelId[]  = {10, 'T','S','0','0','4','1','-','C','U','S'};
-static const u8 g_mfrName[]  = {20, '_','T','Z','3','0','0','0','_','f','a','9','m','l','v','j','a','-','C','U','S'};
+static const u8 g_modelId[] = {15, 'T','S','0','0','4','1','-','E','n','h','a','n','c','e','d'};
+static const u8 g_mfrName[] = {25, '_','T','Z','3','0','0','0','_','f','a','9','m','l','v','j','a','-','E','n','h','a','n','c','e','d'};
 
 /* ---------------------------------------------------------------------------
  * Endpoint / cluster lists
@@ -32,6 +45,8 @@ static const u8 g_mfrName[]  = {20, '_','T','Z','3','0','0','0','_','f','a','9',
 static const u16 app_inClusterList[] = {
     ZCL_CLUSTER_GEN_BASIC,
     ZCL_CLUSTER_GEN_IDENTIFY,
+    ZCL_CLUSTER_GEN_POWER_CFG,
+    ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
 };
 
 static const u16 app_outClusterList[] = {
@@ -45,38 +60,19 @@ static const u16 app_outClusterList[] = {
 #define APP_OUT_CLUSTER_NUM  (sizeof(app_outClusterList) / sizeof(app_outClusterList[0]))
 
 const af_simple_descriptor_t app_simpleDesc = {
-    HA_PROFILE_ID,
-    HA_DEV_ONOFF_SWITCH,
-    APP_ENDPOINT,
-    1,                              /* device version */
-    0,                              /* reserved */
-    APP_IN_CLUSTER_NUM,
-    APP_OUT_CLUSTER_NUM,
-    (u16 *)app_inClusterList,
-    (u16 *)app_outClusterList,
+    HA_PROFILE_ID, HA_DEV_ONOFF_SWITCH, APP_ENDPOINT, 1, 0,
+    APP_IN_CLUSTER_NUM, APP_OUT_CLUSTER_NUM,
+    (u16 *)app_inClusterList, (u16 *)app_outClusterList,
 };
 
-/* ---- Basic cluster ---- *
- * The SDK doesn't provide the attribute-storage structs — each app defines its
- * own. String attributes point at the length-prefixed arrays above. */
+/* ---- Basic ---- */
 typedef struct {
-    u8 zclVersion;
-    u8 appVersion;
-    u8 stackVersion;
-    u8 hwVersion;
-    u8 powerSource;
-    u8 deviceEnable;
+    u8 zclVersion, appVersion, stackVersion, hwVersion, powerSource, deviceEnable;
 } app_basicAttr_t;
-
 static app_basicAttr_t g_basicAttrs = {
-    .zclVersion   = 0x03,
-    .appVersion   = 0x00,
-    .stackVersion = 0x02,
-    .hwVersion    = 0x00,
-    .powerSource  = POWER_SOURCE_BATTERY,
-    .deviceEnable = TRUE,
+    .zclVersion = 0x03, .appVersion = 0x00, .stackVersion = 0x02, .hwVersion = 0x00,
+    .powerSource = POWER_SOURCE_BATTERY, .deviceEnable = TRUE,
 };
-
 static const zclAttrInfo_t basic_attrTbl[] = {
     { ZCL_ATTRID_BASIC_ZCL_VER,           ZCL_DATA_TYPE_UINT8,    ACCESS_CONTROL_READ, (u8 *)&g_basicAttrs.zclVersion },
     { ZCL_ATTRID_BASIC_APP_VER,           ZCL_DATA_TYPE_UINT8,    ACCESS_CONTROL_READ, (u8 *)&g_basicAttrs.appVersion },
@@ -90,37 +86,51 @@ static const zclAttrInfo_t basic_attrTbl[] = {
 };
 #define BASIC_ATTR_NUM   (sizeof(basic_attrTbl) / sizeof(zclAttrInfo_t))
 
-/* ---- Identify cluster ---- */
+/* ---- Identify ---- */
 typedef struct { u16 identifyTime; } app_identifyAttr_t;
 static app_identifyAttr_t g_identifyAttrs = { .identifyTime = 0x0000 };
-
 static const zclAttrInfo_t identify_attrTbl[] = {
     { ZCL_ATTRID_IDENTIFY_TIME,           ZCL_DATA_TYPE_UINT16, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (u8 *)&g_identifyAttrs.identifyTime },
     { ZCL_ATTRID_GLOBAL_CLUSTER_REVISION, ZCL_DATA_TYPE_UINT16, ACCESS_CONTROL_READ, (u8 *)&zcl_attr_global_clusterRevision },
 };
 #define IDENTIFY_ATTR_NUM   (sizeof(identify_attrTbl) / sizeof(zclAttrInfo_t))
 
+/* ---- Power Config (battery values live in battery.c) ---- */
+static const zclAttrInfo_t powerCfg_attrTbl[] = {
+    { ZCL_ATTRID_BATTERY_VOLTAGE,              ZCL_DATA_TYPE_UINT8,  ACCESS_CONTROL_READ | ACCESS_CONTROL_REPORTABLE, (u8 *)&g_batteryVoltage },
+    { ZCL_ATTRID_BATTERY_PERCENTAGE_REMAINING, ZCL_DATA_TYPE_UINT8,  ACCESS_CONTROL_READ | ACCESS_CONTROL_REPORTABLE, (u8 *)&g_batteryPercentage },
+    { ZCL_ATTRID_GLOBAL_CLUSTER_REVISION,      ZCL_DATA_TYPE_UINT16, ACCESS_CONTROL_READ, (u8 *)&zcl_attr_global_clusterRevision },
+};
+#define POWERCFG_ATTR_NUM   (sizeof(powerCfg_attrTbl) / sizeof(zclAttrInfo_t))
+
+/* ---- Multistate Input (gesture publishing, F8) ---- */
+static u16 g_msPresentValue = 0;
+static u16 g_msNumStates    = 10;
+static u8  g_msOutOfService = 0;
+static u8  g_msStatusFlags  = 0;
+static u32 g_holdDuration   = 0;
+static const zclAttrInfo_t multistate_attrTbl[] = {
+    { ZCL_MULTISTATE_INPUT_ATTRID_PRESENT_VALUE,  ZCL_DATA_TYPE_UINT16,  ACCESS_CONTROL_READ | ACCESS_CONTROL_REPORTABLE, (u8 *)&g_msPresentValue },
+    { ZCL_MULTISTATE_INPUT_ATTRID_NUM_OF_STATES,  ZCL_DATA_TYPE_UINT16,  ACCESS_CONTROL_READ, (u8 *)&g_msNumStates },
+    { ZCL_MULTISTATE_INPUT_ATTRID_OUT_OF_SERVICE, ZCL_DATA_TYPE_BOOLEAN, ACCESS_CONTROL_READ, (u8 *)&g_msOutOfService },
+    { ZCL_MULTISTATE_INPUT_ATTRID_STATUS_FLAGS,   ZCL_DATA_TYPE_BITMAP8, ACCESS_CONTROL_READ, (u8 *)&g_msStatusFlags },
+    { ZCL_ATTRID_GLOBAL_CLUSTER_REVISION,         ZCL_DATA_TYPE_UINT16,  ACCESS_CONTROL_READ, (u8 *)&zcl_attr_global_clusterRevision },
+};
+#define MULTISTATE_ATTR_NUM   (sizeof(multistate_attrTbl) / sizeof(zclAttrInfo_t))
+
 static const zcl_specClusterInfo_t g_appClusterList[] = {
-    { ZCL_CLUSTER_GEN_BASIC,    MANUFACTURER_CODE_NONE, BASIC_ATTR_NUM,    basic_attrTbl,    zcl_basic_register,    NULL },
-    { ZCL_CLUSTER_GEN_IDENTIFY, MANUFACTURER_CODE_NONE, IDENTIFY_ATTR_NUM, identify_attrTbl, zcl_identify_register, NULL },
+    { ZCL_CLUSTER_GEN_BASIC,                 MANUFACTURER_CODE_NONE, BASIC_ATTR_NUM,      basic_attrTbl,      zcl_basic_register,           NULL },
+    { ZCL_CLUSTER_GEN_IDENTIFY,              MANUFACTURER_CODE_NONE, IDENTIFY_ATTR_NUM,   identify_attrTbl,   zcl_identify_register,        NULL },
+    { ZCL_CLUSTER_GEN_POWER_CFG,             MANUFACTURER_CODE_NONE, POWERCFG_ATTR_NUM,   powerCfg_attrTbl,   zcl_powerCfg_register,        NULL },
+    { ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,MANUFACTURER_CODE_NONE, MULTISTATE_ATTR_NUM, multistate_attrTbl, zcl_multistate_input_register,NULL },
 };
 #define APP_CLUSTER_NUM   (sizeof(g_appClusterList) / sizeof(g_appClusterList[0]))
 
 /* ---------------------------------------------------------------------------
- * ZDO / BDB callbacks
+ * ZDO / BDB callbacks + pairing (F10)
  * ------------------------------------------------------------------------- */
 const zdo_appIndCb_t appCbLst = {
-    bdb_zdoStartDevCnf,     /* start device cnf */
-    NULL,                   /* reset cnf */
-    NULL,                   /* device announce ind */
-    NULL,                   /* leave ind */
-    NULL,                   /* leave cnf */
-    NULL,                   /* nwk update ind */
-    NULL,                   /* permit join ind */
-    NULL,                   /* nlme sync cnf */
-    NULL,                   /* tc join ind */
-    NULL,                   /* tc frame counter near limit */
-    NULL,                   /* nwk status ind */
+    bdb_zdoStartDevCnf, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 };
 
 bdb_commissionSetting_t g_bdbCommissionSetting = {
@@ -135,78 +145,238 @@ bdb_commissionSetting_t g_bdbCommissionSetting = {
     .touchlinkLqiThreshold             = 0xA0,
 };
 
+static u8 s_pairing;
+static ev_timer_event_t *s_pairTimer;
+
+static int pair_timeout_cb(void *arg)
+{
+    if (s_pairing) {
+        s_pairing = 0;
+        led_stop();
+        printf("net=pair_timeout\n");
+    }
+    s_pairTimer = NULL;
+    return -1;
+}
+
+/* Reset gesture (F10): begin network steering with the pairing LED. On a fresh
+ * flash this joins Z2M. (Leave-and-rejoin for re-pairing an already-joined
+ * device is refined with the sleep/network work in Test 2.) */
+static void start_pairing(void)
+{
+    printf("net=pairing\n");
+    s_pairing = 1;
+    led_pair();
+    bdb_networkSteerStart();
+    if (s_pairTimer) TL_ZB_TIMER_CANCEL(&s_pairTimer);
+    s_pairTimer = TL_ZB_TIMER_SCHEDULE(pair_timeout_cb, NULL, PAIR_WINDOW_MS);
+}
+
 static void app_bdbInitCb(u8 status, u8 joinedNetwork)
 {
     printf("net=bdb_init status=%d joined=%d\n", status, joinedNetwork);
-    /* Steering is only started by the reset/pair gesture (F10) — never here. */
+    /* Never auto-steer here — steering only starts via the reset gesture (F10). */
 }
 
 static void app_bdbCommissioningCb(u8 status, void *arg)
 {
     printf("net=commission status=%d\n", status);
-    /* Real rejoin handling (F9) lands in M7. */
+    if (status == BDB_COMMISSION_STA_SUCCESS) {
+        if (s_pairing) {
+            s_pairing = 0;
+            if (s_pairTimer) TL_ZB_TIMER_CANCEL(&s_pairTimer);
+            led_stop();
+        }
+        printf("net=joined\n");
+    }
 }
 
-bdb_appCb_t g_appBdbCb = {
-    app_bdbInitCb,
-    app_bdbCommissioningCb,
-    NULL,
-    NULL,
-};
+bdb_appCb_t g_appBdbCb = { app_bdbInitCb, app_bdbCommissioningCb, NULL, NULL };
 
 #if PM_ENABLE
-static drv_pm_pinCfg_t g_pmWakeupCfg[] = {
-    { BUTTON_PIN, PM_WAKEUP_LEVEL_LOW },   /* button is active-low */
-};
+static drv_pm_pinCfg_t g_pmWakeupCfg[] = { { BUTTON_PIN, PM_WAKEUP_LEVEL_LOW } };
 #endif
 
+static void app_zclProcessIncomingMsg(zclIncoming_t *pInMsg) { (void)pInMsg; }
+
 /* ---------------------------------------------------------------------------
- * ZCL foundation hook — minimal for M1 (per-cluster handling arrives in M4).
+ * Cluster commands to bindings (F3) — binding-table delivery only.
  * ------------------------------------------------------------------------- */
-static void app_zclProcessIncomingMsg(zclIncoming_t *pInMsg)
+static void bind_dst(epInfo_t *dst)
 {
-    /* Per-cluster command handling arrives in M4. */
+    TL_SETSTRUCTCONTENT(*dst, 0);
+    dst->dstAddrMode = APS_DSTADDR_EP_NOTPRESETNT;   /* use the binding table */
+    dst->dstEp       = APP_ENDPOINT;
+    dst->profileId   = HA_PROFILE_ID;
+}
+
+static void act_toggle(void)
+{
+    epInfo_t dst; bind_dst(&dst);
+    zcl_onOff_toggleCmd(APP_ENDPOINT, &dst, TRUE);
+}
+
+static void act_level_move(u8 up)
+{
+    epInfo_t dst; bind_dst(&dst);
+    move_t m; TL_SETSTRUCTCONTENT(m, 0);
+    m.moveMode = up ? LEVEL_MOVE_UP : LEVEL_MOVE_DOWN;
+    m.rate     = LEVEL_MOVE_RATE;
+    zcl_level_moveCmd(APP_ENDPOINT, &dst, TRUE, &m);
+}
+
+static void act_level_stop(void)
+{
+    epInfo_t dst; bind_dst(&dst);
+    stop_t s; TL_SETSTRUCTCONTENT(s, 0);
+    zcl_level_stopCmd(APP_ENDPOINT, &dst, TRUE, &s);
+}
+
+static void act_ct_move(u8 up)
+{
+    epInfo_t dst; bind_dst(&dst);
+    zcl_colorCtrlMoveColorTemperatureCmd_t c; TL_SETSTRUCTCONTENT(c, 0);
+    c.moveMode           = up ? COLOR_CTRL_MOVE_UP : COLOR_CTRL_MOVE_DOWN;
+    c.rate               = CT_MOVE_RATE;
+    c.colorTempMinMireds = CT_MIN_MIREDS;
+    c.colorTempMaxMireds = CT_MAX_MIREDS;
+    zcl_lightColorCtrl_moveColorTemperatureCmd(APP_ENDPOINT, &dst, TRUE, &c);
+}
+
+static void act_ct_stop(void)
+{
+    epInfo_t dst; bind_dst(&dst);
+    zcl_colorCtrlMoveColorTemperatureCmd_t c; TL_SETSTRUCTCONTENT(c, 0);
+    c.moveMode = COLOR_CTRL_MOVE_STOP;
+    zcl_lightColorCtrl_moveColorTemperatureCmd(APP_ENDPOINT, &dst, TRUE, &c);
 }
 
 /* ---------------------------------------------------------------------------
- * Boot heartbeat — 3 quick blinks on the LED so there's a visible sign of life
- * without needing the debug UART wired. The real non-blocking effect engine
- * (F6) replaces this in M2.
+ * Publish the gesture to the coordinator via Multistate Input (F8).
+ * ------------------------------------------------------------------------- */
+static void publish_action(u16 code, u8 is_hold_stop, u32 dur)
+{
+    epInfo_t dst; bind_dst(&dst);
+    if (is_hold_stop) {
+        g_holdDuration = dur;
+        zcl_report(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR, ZCL_SEQ_NUM,
+                   APP_MANUFACTURER_CODE, ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
+                   ATTR_HOLD_DURATION, ZCL_DATA_TYPE_UINT32, (u8 *)&g_holdDuration);
+    }
+    g_msPresentValue = code;
+    zcl_sendReportCmd(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR,
+                      ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
+                      ZCL_MULTISTATE_INPUT_ATTRID_PRESENT_VALUE,
+                      ZCL_DATA_TYPE_UINT16, (u8 *)&g_msPresentValue);
+}
+
+/* ---------------------------------------------------------------------------
+ * Direction flip flags (F3a) — retained RAM (survive sleep, reset on power loss).
+ * ------------------------------------------------------------------------- */
+static u8 s_level_dir = LEVEL_START_DIR;   /* single-hold level up/down       */
+static u8 s_ct_dir    = 1;                 /* double-hold colour temp up/down */
+
+/* ---------------------------------------------------------------------------
+ * Gesture handler — F3 command + F8 publish + F6 LED effect + logging.
+ * ------------------------------------------------------------------------- */
+static void on_gesture(const gesture_event_t *e)
+{
+    if (e->id != G_CLICK_TICK) {
+        printf("gesture=%s dur=%d\n", gesture_name(e->id), (int)e->duration_ms);
+    }
+
+    switch (e->id) {
+    case G_CLICK_TICK:
+        led_blink(1);
+        break;
+
+    case G_SINGLE_CLICK:
+        act_toggle();
+        publish_action(ACT_SINGLE_CLICK, 0, 0);
+        break;
+    case G_DOUBLE_CLICK:
+        publish_action(ACT_DOUBLE_CLICK, 0, 0);
+        break;
+    case G_TRIPLE_CLICK:
+        publish_action(ACT_TRIPLE_CLICK, 0, 0);
+        break;
+
+    case G_SINGLE_HOLD_START: {
+        u8 d = s_level_dir; s_level_dir ^= 1;
+        act_level_move(d);
+        led_ramp(LED_RAMP_LEVEL_MS, d);
+        publish_action(ACT_SINGLE_HOLD_START, 0, 0);
+        break;
+    }
+    case G_SINGLE_HOLD_STOP:
+        act_level_stop();
+        led_stop();
+        publish_action(ACT_SINGLE_HOLD_STOP, 1, e->duration_ms);
+        break;
+
+    case G_DOUBLE_HOLD_START: {
+        u8 d = s_ct_dir; s_ct_dir ^= 1;
+        act_ct_move(d);
+        led_ramp(LED_RAMP_CT_MS, d);
+        publish_action(ACT_DOUBLE_HOLD_START, 0, 0);
+        break;
+    }
+    case G_DOUBLE_HOLD_STOP:
+        act_ct_stop();
+        led_stop();
+        publish_action(ACT_DOUBLE_HOLD_STOP, 1, e->duration_ms);
+        break;
+
+    case G_TRIPLE_HOLD_START:
+        led_ramp(LED_RAMP_TRIPLE_MS, 1);
+        publish_action(ACT_TRIPLE_HOLD_START, 0, 0);
+        break;
+    case G_TRIPLE_HOLD_STOP:
+        led_stop();
+        publish_action(ACT_TRIPLE_HOLD_STOP, 1, e->duration_ms);
+        break;
+
+    case G_RESET:
+        start_pairing();
+        break;
+
+    case G_OTA_TRIGGER:
+        led_pulse(LED_OTA_PULSE_MS);   /* real OTA session lands in Test 3 */
+        break;
+
+    case G_STUCK:
+        /* Abandon: stop whatever Move might be active, LED off. */
+        act_level_stop();
+        act_ct_stop();
+        led_stop();
+        break;
+
+    default:
+        break;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Battery (F7) — measure periodically; the stack reports per coordinator config.
+ * ------------------------------------------------------------------------- */
+static int battery_timer_cb(void *arg)
+{
+    battery_update();
+    return 0;   /* repeat */
+}
+
+/* ---------------------------------------------------------------------------
+ * Boot heartbeat — visible sign of life before the PWM engine takes over PC4.
  * ------------------------------------------------------------------------- */
 static void led_boot_blink(void)
 {
     drv_gpio_func_set(LED_PIN);
     drv_gpio_output_en(LED_PIN, 1);
     for (u8 i = 0; i < 3; i++) {
-        drv_gpio_write(LED_PIN, 1);   /* active-high: on */
+        drv_gpio_write(LED_PIN, 1);
         WaitMs(120);
         drv_gpio_write(LED_PIN, 0);
         WaitMs(120);
-    }
-}
-
-/* ---------------------------------------------------------------------------
- * Gesture handling — for TEST 1, log each gesture and drive the LED effect.
- * Cluster commands to bindings (F3) and Z2M publishing (F8) are wired in M4/M5;
- * real pairing/OTA behaviour in M10/M11. The click-tick gives one blink per
- * press "as they register"; the semantic click events drive actions later.
- * ------------------------------------------------------------------------- */
-static void on_gesture(const gesture_event_t *e)
-{
-    printf("gesture=%s dur=%d\n", gesture_name(e->id), (int)e->duration_ms);
-
-    switch (e->id) {
-    case G_CLICK_TICK:        led_blink(1);                    break;
-    case G_SINGLE_HOLD_START: led_ramp(LED_RAMP_LEVEL_MS, 1);  break;
-    case G_DOUBLE_HOLD_START: led_ramp(LED_RAMP_CT_MS, 1);     break;
-    case G_TRIPLE_HOLD_START: led_ramp(LED_RAMP_TRIPLE_MS, 1); break;
-    case G_SINGLE_HOLD_STOP:
-    case G_DOUBLE_HOLD_STOP:
-    case G_TRIPLE_HOLD_STOP:
-    case G_STUCK:             led_stop();                      break;
-    case G_RESET:             led_pair();                      break;
-    case G_OTA_TRIGGER:       led_pulse(LED_OTA_PULSE_MS);     break;
-    default:                                                   break;
     }
 }
 
@@ -222,12 +392,9 @@ static void app_stack_init(void)
 static void app_zb_init(void)
 {
     af_powerDescPowerModeUpdate(POWER_MODE_RECEIVER_COMES_WHEN_STIMULATED);
-
     zcl_init(app_zclProcessIncomingMsg);
-
     af_endpointRegister(APP_ENDPOINT, (af_simple_descriptor_t *)&app_simpleDesc,
                         zcl_rx_handler, NULL);
-
     zcl_register(APP_ENDPOINT, APP_CLUSTER_NUM, (zcl_specClusterInfo_t *)g_appClusterList);
 }
 
@@ -247,6 +414,8 @@ void user_init(bool isRetention)
         led_init();
         gestures_init(on_gesture);
         buttons_init();
+        battery_init();
+        TL_ZB_TIMER_SCHEDULE(battery_timer_cb, NULL, BATTERY_MEASURE_MIN_INTERVAL_S * 1000);
 
         app_stack_init();
         app_zb_init();
