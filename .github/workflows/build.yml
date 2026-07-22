@@ -90,6 +90,7 @@ jobs:
         run: gh release upload "${GITHUB_REF_NAME}" zigbee2mqtt/ota/index.json --repo "${GITHUB_REPOSITORY}"
 
       - name: Commit refreshed OTA index to main
+        continue-on-error: true   # release assets already published; index commit is best-effort
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

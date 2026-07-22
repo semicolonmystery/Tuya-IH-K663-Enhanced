@@ -134,7 +134,11 @@ sudo apt install -y gpiod python3-serial   # libgpiod (gpioset) + pyserial
 ```bash
 git clone https://github.com/semicolonmystery/Tuya-IH-K663-Enhanced.git
 cd Tuya-IH-K663-Enhanced
-./build.sh                       # produces build/bin/ih-k663.bin
+sudo apt install -y gpiod python3 python3-serial curl
+
+# Get the firmware. On a Pi, DOWNLOAD it (don't build — the toolchain is x86_64):
+./fetch.sh                       # -> build/bin/ih-k663.bin  (from GitHub Releases)
+# (only on an x86_64 machine would you instead run ./build.sh)
 
 # If your board has NO reset pad (power-cycle mode), export these first:
 export PWR_GPIO=17 RST_GPIO=""    # (skip this line if using a reset pad)
