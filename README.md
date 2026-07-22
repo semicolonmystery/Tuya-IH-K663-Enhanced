@@ -19,7 +19,7 @@ toolchain just to flash.
 
 | Action | Command | Requirements |
 |---|---|---|
-| **Get firmware** (recommended on a Pi) | `./fetch.sh` | `curl` if the repo is **public**; `gh` (logged in) if it's **private**. If private, Z2M can't fetch OTA either — making the repo public is simplest. |
+| **Get firmware** (recommended on a Pi) | `./fetch.sh` | `curl` |
 | **Flash** to the device | `./flash.sh …` | `gpiod` (provides `gpioset`, libgpiod **v2**), `python3`, `python3-serial` (pyserial), `curl` (auto-downloads the flasher once). Pi UART routed to PL011 — see [FLASHING.md](FLASHING.md) §3. Auto-elevates with `sudo`. |
 | **Watch debug UART** | `./debug.sh` | just `coreutils` (`stty`/`cat`); serial access (`sudo` or `dialout` group) |
 | **Build locally** (optional) | `./build.sh` | **Docker** (user in the `docker` group, or `sudo`). SDK + TC32 toolchain are downloaded automatically. The toolchain is **x86_64**, so on ARM (a Pi) it builds under slow QEMU emulation — prefer `./fetch.sh` there. |
