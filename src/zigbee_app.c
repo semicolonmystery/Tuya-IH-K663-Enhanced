@@ -19,6 +19,7 @@
 #include "gestures.h"
 #include "led_effects.h"
 #include "battery.h"
+#include "debug.h"
 
 #define APP_ENDPOINT    1
 
@@ -153,7 +154,7 @@ static int pair_timeout_cb(void *arg)
     if (s_pairing) {
         s_pairing = 0;
         led_stop();
-        printf("net=pair_timeout\n");
+        DBG("net=pair_timeout\n");
     }
     s_pairTimer = NULL;
     return -1;
@@ -164,7 +165,7 @@ static int pair_timeout_cb(void *arg)
  * device is refined with the sleep/network work in Test 2.) */
 static void start_pairing(void)
 {
-    printf("net=pairing\n");
+    DBG("net=pairing\n");
     s_pairing = 1;
     led_pair();
     bdb_networkSteerStart();
@@ -172,22 +173,63 @@ static void start_pairing(void)
     s_pairTimer = TL_ZB_TIMER_SCHEDULE(pair_timeout_cb, NULL, PAIR_WINDOW_MS);
 }
 
-static void app_bdbInitCb(u8 status, u8 joinedNetwork)
+/* Network join succeeded — settle poll rate and clear pairing UI. */
+static void app_on_joined(void)
 {
-    printf("net=bdb_init status=%d joined=%d\n", status, joinedNetwork);
-    /* Never auto-steer here — steering only starts via the reset gesture (F10). */
+    if (s_pairing) {
+        s_pairing = 0;
+        if (s_pairTimer) TL_ZB_TIMER_CANCEL(&s_pairTimer);
+        led_stop();
+    }
+#ifdef ZB_ED_ROLE
+    /* Set the poll rate explicitly after (re)connect — the stack can otherwise
+     * miss scheduling the poll task on a fast reconnect (per romasku). */
+    zb_setPollRate(POLL_RATE);
+#endif
+    DBG("net=joined\n");
 }
 
+static void app_bdbInitCb(u8 status, u8 joinedNetwork)
+{
+    DBG("net=bdb_init status=%d joined=%d\n", status, joinedNetwork);
+    if (status == BDB_INIT_STATUS_SUCCESS) {
+        if (joinedNetwork) {
+            app_on_joined();
+        }
+    } else if (joinedNetwork) {
+        /* Was joined but init couldn't reach the network — let the stack rejoin. */
+        zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
+    }
+    /* Steering is only started by the reset gesture (F10) — never here. */
+}
+
+/* F9 — the whole application-level rejoin policy: hand parent-loss / scan-failure
+ * back to the stack's own backoff-driven rejoin. The backoff SCHEDULE is config
+ * in zb_config.h (battery-safe max backoff), not code. */
 static void app_bdbCommissioningCb(u8 status, void *arg)
 {
-    printf("net=commission status=%d\n", status);
-    if (status == BDB_COMMISSION_STA_SUCCESS) {
-        if (s_pairing) {
-            s_pairing = 0;
-            if (s_pairTimer) TL_ZB_TIMER_CANCEL(&s_pairTimer);
-            led_stop();
+    DBG("net=commission status=%d\n", status);
+    switch (status) {
+    case BDB_COMMISSION_STA_SUCCESS:
+        app_on_joined();
+        break;
+
+    case BDB_COMMISSION_STA_NO_SCAN_RESPONSE:
+    case BDB_COMMISSION_STA_PARENT_LOST:
+        DBG("rejoin=backoff\n");
+        zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
+        break;
+
+    case BDB_COMMISSION_STA_REJOIN_FAILURE:
+        /* Guard so a never-joined (factory-new) device doesn't loop. */
+        if (!zb_isDeviceFactoryNew()) {
+            DBG("rejoin=backoff\n");
+            zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
         }
-        printf("net=joined\n");
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -282,7 +324,14 @@ static u8 s_ct_dir    = 1;                 /* double-hold colour temp up/down */
 static void on_gesture(const gesture_event_t *e)
 {
     if (e->id != G_CLICK_TICK) {
-        printf("gesture=%s dur=%d\n", gesture_name(e->id), (int)e->duration_ms);
+        DBG("gesture=%s dur=%d\n", gesture_name(e->id), (int)e->duration_ms);
+    }
+
+    /* F9: a real press while offline kicks an immediate rejoin instead of waiting
+     * out the current backoff. */
+    if (e->id != G_CLICK_TICK && !s_pairing && !zb_isDeviceJoinedNwk()) {
+        DBG("rejoin=button\n");
+        zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
     }
 
     switch (e->id) {
@@ -366,6 +415,28 @@ static int battery_timer_cb(void *arg)
 }
 
 /* ---------------------------------------------------------------------------
+ * Idle task (F4) — runs every main-loop pass. Re-arms the button sampler on a
+ * press (incl. one that woke us), then enters deep sleep with retention when
+ * nothing needs the CPU. The stack schedules its own wakeups (poll/rejoin), so
+ * we never busy-wait and nothing keeps the radio awake indefinitely.
+ * ------------------------------------------------------------------------- */
+static void app_task(void)
+{
+    buttons_poll();
+
+#if PM_ENABLE
+    if (bdb_isIdle() && zb_isTaskDone() && !tl_stackBusy()
+        && !buttons_active() && !gestures_busy() && !led_busy()) {
+        drv_pm_lowPowerEnter();
+        /* Deep-retention can drop GPIO/analog config — re-apply on wake. This
+         * also samples the live button so a waking press is not lost (F1). */
+        led_init();
+        buttons_init();
+    }
+#endif
+}
+
+/* ---------------------------------------------------------------------------
  * Boot heartbeat — visible sign of life before the PWM engine takes over PC4.
  * ------------------------------------------------------------------------- */
 static void led_boot_blink(void)
@@ -378,13 +449,6 @@ static void led_boot_blink(void)
         drv_gpio_write(LED_PIN, 0);
         WaitMs(120);
     }
-}
-
-/* ---- TEMP diagnostics: independent main-loop liveness via the poll path ---- */
-static volatile u32 s_pollCount;
-static void app_idle_poll(void)
-{
-    if (++s_pollCount >= 200000) { s_pollCount = 0; printf("poll_alive\n"); }
 }
 
 /* ---------------------------------------------------------------------------
@@ -409,7 +473,7 @@ void user_init(bool isRetention)
 {
     if (!isRetention) {
         led_boot_blink();
-        printf("\n== IH-K663 boot model=%s ==\n", APP_MODEL_ID);
+        DBG("\n== IH-K663 boot model=%s ==\n", APP_MODEL_ID);
     }
 
 #if PM_ENABLE
@@ -421,22 +485,19 @@ void user_init(bool isRetention)
         led_init();
         gestures_init(on_gesture);
         battery_init();
-        printf("ck0 pre-stack\n");
 
         app_stack_init();
-        printf("ck1 stack\n");
         app_zb_init();
-        printf("ck2 zb\n");
 
         u8 repower = drv_pm_deepSleep_flag_get() ? 0 : 1;
         bdb_init((af_simple_descriptor_t *)&app_simpleDesc,
                  &g_bdbCommissionSetting, &g_appBdbCb, repower);
-        printf("ck3 bdb\n");
 
         buttons_init();
-        ev_on_poll(EV_POLL_IDLE, app_idle_poll);   /* diag: proves the loop runs */
         TL_ZB_TIMER_SCHEDULE(battery_timer_cb, NULL, BATTERY_MEASURE_MIN_INTERVAL_S * 1000);
-        printf("ck4 uinit-done\n");
+
+        /* Idle task drives the sleep policy (F4). */
+        ev_on_poll(EV_POLL_IDLE, app_task);
     } else {
         mac_phyReconfig();
     }

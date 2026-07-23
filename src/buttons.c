@@ -1,19 +1,16 @@
 /********************************************************************************
- * buttons.c — debounced PC2 sampler feeding the gesture engine (F1).
- *
- * A repeating BUTTON_SAMPLE_MS software timer reads the active-low pin, applies
- * a simple stability debounce (DEBOUNCE_MS), and calls gestures_update() with
- * the debounced state each tick. Running continuously keeps the gesture engine
- * live while awake; deep-sleep wake integrity is added with the sleep policy.
+ * buttons.c — debounced PC2 sampler feeding the gesture engine (F1), sleep-aware.
+ * See buttons.h. The tick self-stops when idle so the device can deep-sleep.
  ********************************************************************************/
 #include "tl_common.h"
 #include "app_config.h"
 #include "buttons.h"
 #include "gestures.h"
 
-static u8  s_committed;    /* debounced pressed state         */
-static u8  s_cand;         /* candidate raw state             */
-static u32 s_cand_ms;      /* how long the candidate has held */
+static ev_timer_event_t *s_tick;       /* NULL when not sampling           */
+static u8  s_committed;                 /* debounced pressed state          */
+static u8  s_cand;                      /* candidate raw state              */
+static u32 s_cand_ms;                   /* how long the candidate has held  */
 
 /* Active-low: pin low = pressed. */
 static u8 read_pressed(void)
@@ -24,15 +21,6 @@ static u8 read_pressed(void)
 static int button_tick(void *arg)
 {
     u8 raw = read_pressed();
-
-#if DEBUG_UART_ENABLED
-    /* Diagnostics (remove after bring-up): prove the tick runs and the pin
-     * responds. `btn_raw=` prints on each edge; `hb` is a ~3 s heartbeat. */
-    static u8  s_dbg_raw = 0xff;
-    static u16 s_hb;
-    if (raw != s_dbg_raw) { s_dbg_raw = raw; printf("btn_raw=%d\n", raw); }
-    if (++s_hb >= 300) { s_hb = 0; printf("hb btn=%d\n", raw); }
-#endif
 
     if (raw == s_committed) {
         s_cand = raw;
@@ -48,7 +36,22 @@ static int button_tick(void *arg)
     }
 
     gestures_update(s_committed, BUTTON_SAMPLE_MS);
-    return 0;   /* keep ticking */
+
+    /* Stop sampling once the button is released and no gesture is resolving —
+     * this lets the idle task enter deep sleep (nearest timer becomes the long
+     * poll, not this 10 ms tick). A new press re-arms via buttons_poll(). */
+    if (!s_committed && !gestures_busy()) {
+        s_tick = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+static void start_tick(void)
+{
+    if (!s_tick) {
+        s_tick = TL_ZB_TIMER_SCHEDULE(button_tick, NULL, BUTTON_SAMPLE_MS);
+    }
 }
 
 void buttons_init(void)
@@ -58,11 +61,31 @@ void buttons_init(void)
     drv_gpio_input_en(BUTTON_PIN, 1);
     drv_gpio_up_down_resistor(BUTTON_PIN, PM_PIN_PULLUP_10K);
 
-    s_committed = read_pressed();   /* sample live state at init (wake press)  */
-    s_cand = s_committed;
+    s_committed = 0;
+    s_cand = 0;
     s_cand_ms = 0;
 
-    TL_ZB_TIMER_SCHEDULE(button_tick, NULL, BUTTON_SAMPLE_MS);
+    /* If the button is already held at boot, start sampling immediately. */
+    if (read_pressed()) {
+        start_tick();
+    }
+}
+
+void buttons_poll(void)
+{
+    /* Re-arm sampling on a press (including a press that just woke us from deep
+     * sleep — the live pin is sampled here so the waking press is processed). */
+    if (!s_tick && read_pressed()) {
+        s_committed = 0;
+        s_cand = 1;
+        s_cand_ms = 0;
+        start_tick();
+    }
+}
+
+bool buttons_active(void)
+{
+    return (s_tick != NULL) || read_pressed();
 }
 
 bool button_is_pressed(void)

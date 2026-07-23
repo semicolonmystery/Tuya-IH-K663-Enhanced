@@ -6,6 +6,7 @@
 #include "tl_common.h"
 #include "app_config.h"
 #include "battery.h"
+#include "debug.h"
 
 u8 g_batteryVoltage;      /* 0x0020, 100 mV units */
 u8 g_batteryPercentage;   /* 0x0021, 0.5 % units  */
@@ -60,5 +61,5 @@ void battery_update(void)
     u8  pct = mv_to_pct(mv);
     g_batteryVoltage    = (u8)(mv / 100);
     g_batteryPercentage = (u8)(pct * 2);
-    printf("batt=%d pct=%d\n", mv, pct);
+    DBG("batt=%d pct=%d\n", mv, pct);
 }
