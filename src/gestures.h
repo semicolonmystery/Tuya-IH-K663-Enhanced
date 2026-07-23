@@ -38,6 +38,9 @@ typedef void (*gesture_report_fn)(const gesture_event_t *e);
 
 void gestures_init(gesture_report_fn cb);
 
+/* Force the state machine back to idle (e.g. after a stuck-button abort). */
+void gestures_reset(void);
+
 /* Advance the state machine. `pressed` is the debounced state (1 = pressed),
  * `dt_ms` the time since the previous call. */
 void gestures_update(u8 pressed, u32 dt_ms);

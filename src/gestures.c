@@ -43,6 +43,15 @@ void gestures_init(gesture_report_fn cb)
     s_gap_ms = 0;
 }
 
+void gestures_reset(void)
+{
+    s_state = ST_IDLE;
+    s_prev = 0;
+    s_clicks = 0;
+    s_press_ms = 0;
+    s_gap_ms = 0;
+}
+
 static void emit(gesture_id_t id, u32 dur)
 {
     if (s_cb) {
@@ -130,7 +139,10 @@ void gestures_update(u8 pressed, u32 dt)
             reset_seq();
         } else if (s_press_ms >= STUCK_BUTTON_MS) {
             emit(G_STUCK, s_press_ms);
-            s_state = ST_SWALLOW;
+            /* Return to idle so the sleep policy can run; the button layer arms
+             * wake-on-release for the wedged pin (see buttons_stuck). The pin
+             * stays low, but ST_IDLE ignores the eventual release edge. */
+            reset_seq();
         }
         break;
 

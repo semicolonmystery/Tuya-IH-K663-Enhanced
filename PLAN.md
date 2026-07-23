@@ -98,8 +98,11 @@ implicit "test 0".
   publish `action`/`action_duration` via Multistate/Analog Input. `BINDING_TABLE_SIZE` (16).
 
 - [x] **M6 — Sleep / power management (F4).** Deep sleep + SRAM retention, wake on
-  button + poll timer, `SLEEP_IDLE_MS`, `TX_GRACE_MS`, force-sleep guarantees,
-  stuck-button force-sleep. Nothing keeps the radio awake indefinitely.
+  button + poll timer, `SLEEP_IDLE_MS`, `TX_GRACE_MS`, force-sleep guarantees.
+  Stuck-button force-sleep: `G_STUCK` → `buttons_stuck()` flips the PM wake pin to
+  wake-on-release so a held-low button stops re-waking the MCU, and marks the
+  sampler idle so deep sleep runs; cleared automatically on release. Nothing keeps
+  the radio awake indefinitely.
 
 - [x] **M7 — Network join / rejoin / reparent (F9) — highest risk.** BDB
   commissioning callbacks → `zb_rejoinReqWithBackOff()`; tune `zb_config.h`

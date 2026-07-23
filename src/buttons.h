@@ -27,4 +27,15 @@ bool buttons_active(void);
 /* Current debounced state (1 = pressed). */
 bool button_is_pressed(void);
 
+#if PM_ENABLE
+/* Program the initial PM wake polarity (wake-on-press). Call once at boot in
+ * place of a direct drv_pm_wakeupPinConfig() — the buttons module owns the pin. */
+void buttons_wakeup_init(void);
+
+/* Called from the G_STUCK handler (F4): flip the wake pin to wake-on-release so
+ * a wedged (held-low) button stops re-waking the MCU, and mark the sampler idle
+ * so the device can force deep sleep. Cleared automatically on release. */
+void buttons_stuck(void);
+#endif
+
 #endif /* BUTTONS_H */

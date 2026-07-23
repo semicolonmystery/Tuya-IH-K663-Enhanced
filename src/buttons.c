@@ -12,6 +12,20 @@ static u8  s_committed;                 /* debounced pressed state          */
 static u8  s_cand;                      /* candidate raw state              */
 static u32 s_cand_ms;                   /* how long the candidate has held  */
 
+#if PM_ENABLE
+static u8 s_stuck;                      /* wake-on-release armed for a wedged pin */
+static drv_pm_pinCfg_t s_wakeCfg[] = { { BUTTON_PIN, PM_WAKEUP_LEVEL_LOW } };
+
+/* Program the PM wake polarity for the button pin. Normally wake-on-press
+ * (level LOW, active-low button); flipped to wake-on-release (HIGH) while a
+ * stuck button is held, so the low level does not immediately re-wake us. */
+static void set_wake_level(u8 high)
+{
+    s_wakeCfg[0].wakeupLevel = high ? PM_WAKEUP_LEVEL_HIGH : PM_WAKEUP_LEVEL_LOW;
+    drv_pm_wakeupPinConfig(s_wakeCfg, sizeof(s_wakeCfg) / sizeof(drv_pm_pinCfg_t));
+}
+#endif
+
 /* Active-low: pin low = pressed. */
 static u8 read_pressed(void)
 {
@@ -36,6 +50,16 @@ static int button_tick(void *arg)
     }
 
     gestures_update(s_committed, BUTTON_SAMPLE_MS);
+
+#if PM_ENABLE
+    /* A stuck button was detected (G_STUCK -> buttons_stuck): stop sampling and
+     * let the device sleep. Wake is now armed on release; buttons_poll() cleans
+     * up once the pin actually goes high. */
+    if (s_stuck) {
+        s_tick = NULL;
+        return -1;
+    }
+#endif
 
     /* Stop sampling once the button is released and no gesture is resolving —
      * this lets the idle task enter deep sleep (nearest timer becomes the long
@@ -73,6 +97,22 @@ void buttons_init(void)
 
 void buttons_poll(void)
 {
+#if PM_ENABLE
+    if (s_stuck) {
+        /* Wedged button: wait (asleep) for the pin to finally go high. Once
+         * released, restore wake-on-press and start clean. */
+        if (!read_pressed()) {
+            s_stuck = 0;
+            set_wake_level(0);
+            gestures_reset();
+            s_committed = 0;
+            s_cand = 0;
+            s_cand_ms = 0;
+        }
+        return;
+    }
+#endif
+
     /* Re-arm sampling on a press (including a press that just woke us from deep
      * sleep — the live pin is sampled here so the waking press is processed). */
     if (!s_tick && read_pressed()) {
@@ -85,8 +125,28 @@ void buttons_poll(void)
 
 bool buttons_active(void)
 {
+#if PM_ENABLE
+    /* While stuck, report inactive so the sleep policy can force deep sleep —
+     * the wedged pin no longer blocks it (wake is armed on release). */
+    if (s_stuck) return false;
+#endif
     return (s_tick != NULL) || read_pressed();
 }
+
+#if PM_ENABLE
+void buttons_wakeup_init(void)
+{
+    set_wake_level(0);   /* wake on press (active-low) */
+}
+
+void buttons_stuck(void)
+{
+    /* Called from the G_STUCK handler. Arm wake-on-release so the held-low pin
+     * stops re-waking us, and mark stuck so the sampler stops and sleep runs. */
+    s_stuck = 1;
+    set_wake_level(1);
+}
+#endif
 
 bool button_is_pressed(void)
 {

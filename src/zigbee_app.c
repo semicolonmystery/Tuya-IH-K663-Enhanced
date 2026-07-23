@@ -239,10 +239,6 @@ static void app_bdbCommissioningCb(u8 status, void *arg)
 
 bdb_appCb_t g_appBdbCb = { app_bdbInitCb, app_bdbCommissioningCb, NULL, NULL };
 
-#if PM_ENABLE
-static drv_pm_pinCfg_t g_pmWakeupCfg[] = { { BUTTON_PIN, PM_WAKEUP_LEVEL_LOW } };
-#endif
-
 static void app_zclProcessIncomingMsg(zclIncoming_t *pInMsg) { (void)pInMsg; }
 
 /* ---------------------------------------------------------------------------
@@ -466,6 +462,10 @@ static void on_gesture(const gesture_event_t *e)
         act_level_stop();
         act_ct_stop();
         led_stop();
+#if PM_ENABLE
+        /* Force deep sleep despite the held pin — wake now on release (F4). */
+        buttons_stuck();
+#endif
         break;
 
     default:
@@ -545,7 +545,7 @@ void user_init(bool isRetention)
     }
 
 #if PM_ENABLE
-    drv_pm_wakeupPinConfig(g_pmWakeupCfg, sizeof(g_pmWakeupCfg) / sizeof(drv_pm_pinCfg_t));
+    buttons_wakeup_init();
 #endif
 
     if (!isRetention) {
