@@ -24,7 +24,7 @@ set -euo pipefail
 
 # ------------------------------ CONFIG ----------------------------------------
 PORT="${PORT:-/dev/serial0}"          # Pi PL011 UART wired to the SWS pad
-BAUD="${BAUD:-921600}"                # -b: SWS UART baud
+BAUD="${BAUD:-230400}"                # -b: SWS UART baud
 TACT_MS="${TACT_MS:-600}"             # -t: flasher activation window (ms). Tune!
 
 # GPIO activation. Preferred: RST_GPIO drives the module reset pad.

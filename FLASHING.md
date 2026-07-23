@@ -98,7 +98,7 @@ small labeled/again exposed pad near the MCU. The authoritative rig drawing
 
 ## 3. One-time Raspberry Pi setup
 
-The flasher runs at **921600 baud**, where the Pi's *mini-UART* (`ttyS0`) is
+The flasher runs at **230400 baud**, where the Pi's *mini-UART* (`ttyS0`) is
 unreliable. You must map `/dev/serial0` to the real **PL011** (`ttyAMA0`) and free
 it from the serial login console.
 
