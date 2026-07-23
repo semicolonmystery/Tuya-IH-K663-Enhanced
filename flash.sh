@@ -131,7 +131,16 @@ cmd_app() {
     preflight
     [[ -f "$BIN" ]] || die "firmware not found: $BIN (run ./build.sh first)"
     log "writing $BIN -> 0x0 ${run:+(+run)}"
-    run_flasher $run we 0x0 "$BIN" || die "flash write failed"
+    run_flasher we 0x0 "$BIN" || die "flash write failed"
+    if [[ "$run" == "-r" ]]; then
+        log "resetting module to run application..."
+        local line; line="$(active_line)"
+        gpio_hold "$line" "$(assert_level)"
+        sleep 0.1
+        gpio_hold "$line" "$(release_level)"
+        sleep 0.1
+        gpio_release
+    fi
     log "done."
 }
 
