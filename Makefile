@@ -92,7 +92,8 @@ APP_SOURCES := \
 	$(SRC_DIR)/buttons.c \
 	$(SRC_DIR)/gestures.c \
 	$(SRC_DIR)/led_effects.c \
-	$(SRC_DIR)/battery.c
+	$(SRC_DIR)/battery.c \
+	$(SRC_DIR)/action_cache.c
 MAIN_SRC := $(SDK_PATH)/apps/common/main.c
 
 APP_OBJS := $(APP_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/app/%.o)

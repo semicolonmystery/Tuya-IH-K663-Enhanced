@@ -97,17 +97,17 @@ implicit "test 0".
   the **binding table only** (Toggle / Level Move+Stop / Color-temp Move+Stop),
   publish `action`/`action_duration` via Multistate/Analog Input. `BINDING_TABLE_SIZE` (16).
 
-- [ ] **M6 — Sleep / power management (F4).** Deep sleep + SRAM retention, wake on
+- [x] **M6 — Sleep / power management (F4).** Deep sleep + SRAM retention, wake on
   button + poll timer, `SLEEP_IDLE_MS`, `TX_GRACE_MS`, force-sleep guarantees,
   stuck-button force-sleep. Nothing keeps the radio awake indefinitely.
 
-- [ ] **M7 — Network join / rejoin / reparent (F9) — highest risk.** BDB
+- [x] **M7 — Network join / rejoin / reparent (F9) — highest risk.** BDB
   commissioning callbacks → `zb_rejoinReqWithBackOff()`; tune `zb_config.h`
   rejoin/backoff/poll macros for a battery ZED (long max backoff, long normal
   poll); button-press-while-offline → immediate rejoin (prefer SDK support).
   Verify sleeping between attempts via debug UART.
 
-- [ ] **M8 — Offline action cache (F5).** Semantic cache (On/Off latest slot,
+- [x] **M8 — Offline action cache (F5).** Semantic cache (On/Off latest slot,
   signed Level accumulator→Step, signed CT accumulator→Step), `ACTION_CACHE_MAX`
   (10), flush oldest-first as a handful of messages.
 

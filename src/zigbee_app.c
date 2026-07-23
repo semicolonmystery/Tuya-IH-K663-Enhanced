@@ -19,6 +19,7 @@
 #include "gestures.h"
 #include "led_effects.h"
 #include "battery.h"
+#include "action_cache.h"
 #include "debug.h"
 
 #define APP_ENDPOINT    1
@@ -33,6 +34,8 @@ enum {
 /* Manufacturer-specific attr on Multistate Input carrying the last hold
  * duration (ms); reported immediately before a *_hold_stop (F8). */
 #define ATTR_HOLD_DURATION      0xF001
+
+static void action_cache_flush(void);   /* defined with the cluster senders */
 
 /* ---------------------------------------------------------------------------
  * Identity — length-prefixed ZCL strings (must match the Z2M fingerprint).
@@ -187,6 +190,7 @@ static void app_on_joined(void)
     zb_setPollRate(POLL_RATE);
 #endif
     DBG("net=joined\n");
+    action_cache_flush();   /* F5: send anything cached while offline */
 }
 
 static void app_bdbInitCb(u8 status, u8 joinedNetwork)
@@ -293,10 +297,35 @@ static void act_ct_stop(void)
     zcl_lightColorCtrl_moveColorTemperatureCmd(APP_ENDPOINT, &dst, TRUE, &c);
 }
 
+/* Step commands — used to flush the offline cache as a single net change (F5). */
+static void act_level_step(s32 units)
+{
+    epInfo_t dst; bind_dst(&dst);
+    step_t s; TL_SETSTRUCTCONTENT(s, 0);
+    s.stepMode       = (units >= 0) ? LEVEL_MOVE_UP : LEVEL_MOVE_DOWN;
+    s32 mag          = (units >= 0) ? units : -units;
+    s.stepSize       = (u8)(mag > 254 ? 254 : mag);
+    s.transitionTime = 2;   /* 0.2 s */
+    zcl_level_stepCmd(APP_ENDPOINT, &dst, TRUE, &s);
+}
+
+static void act_ct_step(s32 mireds)
+{
+    epInfo_t dst; bind_dst(&dst);
+    zcl_colorCtrlStepColorTemperatureCmd_t c; TL_SETSTRUCTCONTENT(c, 0);
+    c.stepMode           = (mireds >= 0) ? COLOR_CTRL_STEP_MODE_UP : COLOR_CTRL_STEP_MODE_DOWN;
+    s32 mag              = (mireds >= 0) ? mireds : -mireds;
+    c.stepSize           = (u16)(mag > 0xFFFF ? 0xFFFF : mag);
+    c.transitionTime     = 2;
+    c.colorTempMinMireds = CT_MIN_MIREDS;
+    c.colorTempMaxMireds = CT_MAX_MIREDS;
+    zcl_lightColorCtrl_stepColorTemperatureCmd(APP_ENDPOINT, &dst, TRUE, &c);
+}
+
 /* ---------------------------------------------------------------------------
  * Publish the gesture to the coordinator via Multistate Input (F8).
  * ------------------------------------------------------------------------- */
-static void publish_action(u16 code, u8 is_hold_stop, u32 dur)
+static void publish_action_raw(u16 code, u8 is_hold_stop, u32 dur)
 {
     epInfo_t dst; bind_dst(&dst);
     if (is_hold_stop) {
@@ -312,11 +341,39 @@ static void publish_action(u16 code, u8 is_hold_stop, u32 dur)
                       ZCL_DATA_TYPE_UINT16, (u8 *)&g_msPresentValue);
 }
 
+/* Publish, or queue for later if offline (F5/F8). Duration is only carried
+ * when the report goes out live. */
+static void publish_action(u16 code, u8 is_hold_stop, u32 dur)
+{
+    if (zb_isDeviceJoinedNwk()) {
+        publish_action_raw(code, is_hold_stop, dur);
+    } else {
+        action_cache_push_action(code);
+    }
+}
+
+/* Flush everything cached while offline, oldest-first, as a handful of messages. */
+static void action_cache_flush(void)
+{
+    if (action_cache_empty()) return;
+    DBG("cache=flush\n");
+    if (action_cache_toggle_pending()) act_toggle();
+    if (action_cache_level_get() != 0)  act_level_step(action_cache_level_get());
+    if (action_cache_ct_get() != 0)     act_ct_step(action_cache_ct_get());
+    u8 n = action_cache_action_count();
+    for (u8 i = 0; i < n; i++) {
+        publish_action_raw(action_cache_action_at(i), 0, 0);
+    }
+    action_cache_clear();
+}
+
 /* ---------------------------------------------------------------------------
  * Direction flip flags (F3a) — retained RAM (survive sleep, reset on power loss).
  * ------------------------------------------------------------------------- */
 static u8 s_level_dir = LEVEL_START_DIR;   /* single-hold level up/down       */
 static u8 s_ct_dir    = 1;                 /* double-hold colour temp up/down */
+static u8 s_last_level_up;                 /* dir of the in-progress single hold */
+static u8 s_last_ct_up;                    /* dir of the in-progress double hold */
 
 /* ---------------------------------------------------------------------------
  * Gesture handler — F3 command + F8 publish + F6 LED effect + logging.
@@ -340,7 +397,8 @@ static void on_gesture(const gesture_event_t *e)
         break;
 
     case G_SINGLE_CLICK:
-        act_toggle();
+        if (zb_isDeviceJoinedNwk()) act_toggle();
+        else                        action_cache_toggle();
         publish_action(ACT_SINGLE_CLICK, 0, 0);
         break;
     case G_DOUBLE_CLICK:
@@ -351,27 +409,37 @@ static void on_gesture(const gesture_event_t *e)
         break;
 
     case G_SINGLE_HOLD_START: {
-        u8 d = s_level_dir; s_level_dir ^= 1;
-        act_level_move(d);
+        u8 d = s_level_dir; s_level_dir ^= 1; s_last_level_up = d;
+        if (zb_isDeviceJoinedNwk()) act_level_move(d);   /* offline: net change cached at stop */
         led_ramp(LED_RAMP_LEVEL_MS, d);
         publish_action(ACT_SINGLE_HOLD_START, 0, 0);
         break;
     }
     case G_SINGLE_HOLD_STOP:
-        act_level_stop();
+        if (zb_isDeviceJoinedNwk()) {
+            act_level_stop();
+        } else {
+            s32 units = (s32)LEVEL_MOVE_RATE * (s32)e->duration_ms / 1000;
+            action_cache_level(s_last_level_up ? units : -units);
+        }
         led_stop();
         publish_action(ACT_SINGLE_HOLD_STOP, 1, e->duration_ms);
         break;
 
     case G_DOUBLE_HOLD_START: {
-        u8 d = s_ct_dir; s_ct_dir ^= 1;
-        act_ct_move(d);
+        u8 d = s_ct_dir; s_ct_dir ^= 1; s_last_ct_up = d;
+        if (zb_isDeviceJoinedNwk()) act_ct_move(d);
         led_ramp(LED_RAMP_CT_MS, d);
         publish_action(ACT_DOUBLE_HOLD_START, 0, 0);
         break;
     }
     case G_DOUBLE_HOLD_STOP:
-        act_ct_stop();
+        if (zb_isDeviceJoinedNwk()) {
+            act_ct_stop();
+        } else {
+            s32 mireds = (s32)CT_MOVE_RATE * (s32)e->duration_ms / 1000;
+            action_cache_ct(s_last_ct_up ? mireds : -mireds);
+        }
         led_stop();
         publish_action(ACT_DOUBLE_HOLD_STOP, 1, e->duration_ms);
         break;
