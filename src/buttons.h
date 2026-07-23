@@ -12,7 +12,11 @@
 
 #include "tl_common.h"
 
-/* Configure the PC2 GPIO (input, pull-up). Does not start the tick. */
+/* GPIO + pull-up config only, no software state. Call on every boot AND every
+ * deep-retention wake to restore the pad (deep retention loses it). */
+void buttons_hw_init(void);
+
+/* Full init: GPIO (via buttons_hw_init) + debounce state + boot-held tick. */
 void buttons_init(void);
 
 /* Called from the idle task each main-loop pass: if the button is pressed and
@@ -31,13 +35,17 @@ bool button_is_pressed(void);
 bool buttons_raw_pressed(void);
 
 #if PM_ENABLE
-/* Program the initial PM wake polarity (wake-on-press). Call once at boot in
+/* Program the initial PM wake polarity (wake-on-press). Call in user_init in
  * place of a direct drv_pm_wakeupPinConfig() — the buttons module owns the pin. */
 void buttons_wakeup_init(void);
 
-/* Called from the G_STUCK handler (F4): flip the wake pin to wake-on-release so
- * a wedged (held-low) button stops re-waking the MCU, and mark the sampler idle
- * so the device can force deep sleep. Cleared automatically on release. */
+/* Re-arm the wake pin for the opposite of the current button state. Call right
+ * before entering deep sleep so a held/stuck button wakes on release, not on
+ * its (already-low) level. */
+void buttons_arm_wake(void);
+
+/* Called from the G_STUCK handler (F4): mark the sampler idle so the device can
+ * force deep sleep despite the held pin. Cleared automatically on release. */
 void buttons_stuck(void);
 #endif
 

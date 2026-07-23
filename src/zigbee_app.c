@@ -453,10 +453,6 @@ static void on_gesture(const gesture_event_t *e)
         start_pairing();
         break;
 
-    case G_OTA_TRIGGER:
-        led_pulse(LED_OTA_PULSE_MS);   /* real OTA session lands in Test 3 */
-        break;
-
     case G_STUCK:
         /* Abandon: stop whatever Move might be active, LED off. */
         act_level_stop();
@@ -509,17 +505,22 @@ static void app_task(void)
 #if PM_ENABLE && !DIAG_DISABLE_SLEEP
     if (bdb_isIdle() && zb_isTaskDone() && !tl_stackBusy()
         && !buttons_active() && !gestures_busy() && !led_busy()) {
+        /* Wake on the opposite of the button's current level (press when idle,
+         * release when stuck) so a wedged pin can't hold us awake. */
+        buttons_arm_wake();
 #if DIAG_VERBOSE
         DBG("sleep>\n");
 #endif
         drv_pm_lowPowerEnter();
+        /* Reached only if we did NOT actually deep-sleep (e.g. a timer was too
+         * near, or suspend mode): a true deep-retention wake resets into main()/
+         * user_init instead. Re-apply GPIO for that in-place case; the retention
+         * case is handled by user_init(isRetention=1). */
 #if DIAG_VERBOSE
         DBG("<wake btn=%d\n", (int)buttons_raw_pressed());
 #endif
-        /* Deep-retention can drop GPIO/analog config — re-apply on wake. This
-         * also samples the live button so a waking press is not lost (F1). */
         led_init();
-        buttons_init();
+        buttons_hw_init();
     }
 #endif
 }
@@ -564,13 +565,20 @@ void user_init(bool isRetention)
         DBG("\n== IH-K663 boot model=%s ==\n", APP_MODEL_ID);
     }
 
+    /* Hardware that MUST be restored on every boot AND every deep-retention wake
+     * (deep retention resets into main() and loses GPIO/PWM SFRs + the button
+     * pull-up). The SDK's sampleContactSensor does exactly this — led_init and
+     * the wake-pin config run unconditionally, only the stack/BDB/ev_on_poll
+     * setup is gated on !isRetention. Skipping this on the retention path is what
+     * left the button pin floating low (read as permanently pressed) after the
+     * first sleep. */
+    led_init();
+    buttons_hw_init();
 #if PM_ENABLE
     buttons_wakeup_init();
 #endif
 
     if (!isRetention) {
-        /* Hardware + non-timer init. */
-        led_init();
         gestures_init(on_gesture);
         battery_init();
 
@@ -590,6 +598,9 @@ void user_init(bool isRetention)
         /* Idle task drives the sleep policy (F4). */
         ev_on_poll(EV_POLL_IDLE, app_task);
     } else {
+        /* Deep-retention wake: re-config the radio PHY (hardware regs lost, else
+         * the MAC can hang on the next data poll). SRAM — timers, ev_on_poll
+         * callbacks, network + app state — is retained, so nothing else re-inits. */
         mac_phyReconfig();
     }
 }

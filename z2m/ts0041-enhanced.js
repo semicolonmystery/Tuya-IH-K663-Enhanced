@@ -84,6 +84,13 @@ const ACTION_LOOKUP = {
 // remotes on the same network don't clobber each other's pending value.
 const pendingHoldDurations = new Map();
 
+// Per-device store for the LAST hold duration, kept indefinitely. Z2M treats
+// `action` (and, in practice, the related `action_*` fields) as momentary and
+// clears them shortly after publishing, so `action_duration` would flash then
+// go back to null. To make it persist we re-assert the last known duration on
+// every action report. Keyed by ieeeAddr.
+const lastHoldDurations = new Map();
+
 const fzLocal = {
     ih_k663_enhanced_action: {
         cluster: 'genMultistateInput',
@@ -115,9 +122,16 @@ const fzLocal = {
                     if (action.endsWith('_hold_stop')) {
                         const duration = pendingHoldDurations.get(ieeeAddr);
                         if (duration !== undefined) {
-                            result.action_duration = duration;
+                            lastHoldDurations.set(ieeeAddr, duration);
                             pendingHoldDurations.delete(ieeeAddr);
                         }
+                    }
+
+                    // Re-assert the last known hold duration on EVERY action so
+                    // it persists in Z2M state instead of resetting to null.
+                    const lastDuration = lastHoldDurations.get(ieeeAddr);
+                    if (lastDuration !== undefined) {
+                        result.action_duration = lastDuration;
                     }
                 } else {
                     meta.logger && meta.logger.warn &&

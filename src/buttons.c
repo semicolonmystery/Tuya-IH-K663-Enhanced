@@ -82,12 +82,21 @@ static void start_tick(void)
     }
 }
 
-void buttons_init(void)
+void buttons_hw_init(void)
 {
+    /* GPIO/pull-up config only — no software state. MUST be re-applied on every
+     * boot AND every deep-retention wake: deep retention loses the pad SFRs and
+     * the analog pull-up, so without this the pin floats low and reads as
+     * permanently pressed after the first sleep. */
     drv_gpio_func_set(BUTTON_PIN);
     drv_gpio_output_en(BUTTON_PIN, 0);
     drv_gpio_input_en(BUTTON_PIN, 1);
     drv_gpio_up_down_resistor(BUTTON_PIN, PM_PIN_PULLUP_10K);
+}
+
+void buttons_init(void)
+{
+    buttons_hw_init();
 
     s_committed = 0;
     s_cand = 0;
@@ -107,7 +116,6 @@ void buttons_poll(void)
          * released, restore wake-on-press and start clean. */
         if (!read_pressed()) {
             s_stuck = 0;
-            set_wake_level(0);
             gestures_reset();
             s_committed = 0;
             s_cand = 0;
@@ -143,15 +151,24 @@ bool buttons_active(void)
 #if PM_ENABLE
 void buttons_wakeup_init(void)
 {
-    set_wake_level(0);   /* wake on press (active-low) */
+    set_wake_level(0);   /* released at boot: wake on press (active-low) */
+}
+
+void buttons_arm_wake(void)
+{
+    /* Arm the wake pin for the OPPOSITE of the current pin state, re-evaluated
+     * before every sleep: released -> wake on press; held (e.g. a stuck button)
+     * -> wake on release. This is what lets a wedged button still deep-sleep
+     * instead of level-waking forever. Mirrors romasku / the Telink SDK. */
+    set_wake_level(read_pressed());   /* pressed(1) -> HIGH (wake on release) */
 }
 
 void buttons_stuck(void)
 {
-    /* Called from the G_STUCK handler. Arm wake-on-release so the held-low pin
-     * stops re-waking us, and mark stuck so the sampler stops and sleep runs. */
+    /* Called from the G_STUCK handler: mark stuck so buttons_active() reports
+     * idle and the sleep policy runs. The wake polarity is handled generically
+     * by buttons_arm_wake() before sleep (held -> wake on release). */
     s_stuck = 1;
-    set_wake_level(1);
 }
 #endif
 

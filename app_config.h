@@ -51,12 +51,10 @@
 #endif
 /* DIAG_DISABLE_SLEEP: 1 compiles out drv_pm_lowPowerEnter() so the idle task
  * never deep-sleeps — used to bisect whether the sleep policy is the culprit.
- * Currently 1: the in-place deep-retention wake leaves the system clock/analog
- * pull-ups unrestored (button pin floats low, UART garbles), so deep sleep is
- * disabled until that wake path is fixed. Battery life is not representative in
- * this state; the button/gesture/network pipeline is fully functional. */
+ * Re-enabled (0): the deep-retention wake now restores the button pull-up via
+ * buttons_hw_init() in user_init's retention path (mirrors the SDK). */
 #ifndef DIAG_DISABLE_SLEEP
-#define DIAG_DISABLE_SLEEP        1
+#define DIAG_DISABLE_SLEEP        0
 #endif
 #define DIAG_HEARTBEAT_MS         1000
 
@@ -150,17 +148,21 @@
 
 /* ============================================================================
  * F10 — Pairing / factory reset
+ * Trigger: RESET_TRIGGER_CLICKS short clicks, then hold the next press for
+ * RESET_TRIGGER_HOLD_MS. (Reuses what used to be the on-device OTA trigger; the
+ * old 10-rapid-click reset was removed.)
  * ========================================================================== */
-#define RESET_CLICK_COUNT                10    /* (10) rapid clicks to reset      */
+#define RESET_TRIGGER_CLICKS             4     /* clicks before the reset hold    */
+#define RESET_TRIGGER_HOLD_MS            5000  /* hold on the next press to reset */
 #define PAIR_WINDOW_MS                   30000 /* (30000) steering window         */
 
 /* ============================================================================
- * F11 — OTA
+ * F11 — OTA. Initiated from Z2M only: the device advertises the OTA cluster and
+ * pulls the image when it next polls (a button press wakes it); there is NO
+ * on-device OTA trigger gesture.
  * ========================================================================== */
-#define OTA_TRIGGER_CLICKS               4     /* (4) clicks before the hold      */
-#define OTA_TRIGGER_HOLD_MS              5000  /* (5000) hold on the 5th press    */
 #define OTA_SESSION_MAX_S                600   /* (600) session cap               */
-#define OTA_AUTO_QUERY_ENABLED           0     /* (0) manual trigger only         */
+#define OTA_AUTO_QUERY_ENABLED           0     /* (0) Z2M-initiated only          */
 #define OTA_QUERY_MIN_INTERVAL_S         604800/* (604800) opportunistic query gap */
 
 #endif /* APP_CONFIG_H */

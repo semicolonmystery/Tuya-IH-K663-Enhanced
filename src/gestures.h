@@ -20,8 +20,7 @@ typedef enum {
     G_DOUBLE_HOLD_STOP,
     G_TRIPLE_HOLD_START,
     G_TRIPLE_HOLD_STOP,
-    G_RESET,          /* RESET_CLICK_COUNT rapid clicks (F10)                 */
-    G_OTA_TRIGGER,    /* OTA_TRIGGER_CLICKS clicks + long hold (F11)          */
+    G_RESET,          /* RESET_TRIGGER_CLICKS clicks + long hold (F10)        */
     G_STUCK,          /* button held past STUCK_BUTTON_MS — abandon (F4)      */
     G_CLICK_TICK,     /* one short click just registered — LED feedback only,
                        * emitted per press so the LED blinks "as they register".

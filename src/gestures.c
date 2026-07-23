@@ -7,9 +7,8 @@
  *     is emitted (single/double/triple).
  *   - A hold at count N = (N-1) completed clicks then a press crossing HOLD_MS.
  *     Emits *_HOLD_START, then *_HOLD_STOP with the total held duration.
- *   - RESET_CLICK_COUNT rapid clicks -> G_RESET (pairing/factory reset).
- *   - OTA_TRIGGER_CLICKS clicks then a press held >= OTA_TRIGGER_HOLD_MS
- *     -> G_OTA_TRIGGER.
+ *   - RESET_TRIGGER_CLICKS clicks then a press held >= RESET_TRIGGER_HOLD_MS
+ *     -> G_RESET (pairing / factory reset).
  *   - A press held past STUCK_BUTTON_MS -> G_STUCK; the eventual release is
  *     silently swallowed.
  ********************************************************************************/
@@ -21,7 +20,7 @@ typedef enum {
     ST_IDLE = 0,    /* nothing pressed, no pending clicks         */
     ST_PRESS,       /* button down, not yet a hold                */
     ST_HOLD,        /* hold recognized (count 1..3), Move active  */
-    ST_OTA_HOLD,    /* 4 clicks + 5th press held, waiting for OTA */
+    ST_RESET_HOLD,  /* N clicks + next press held, waiting for reset */
     ST_GAP,         /* button up, waiting for the next click      */
     ST_SWALLOW,     /* swallow the release after stuck/reset/ota  */
 } state_t;
@@ -112,20 +111,15 @@ void gestures_update(u8 pressed, u32 dt)
             /* Short press -> a click. Blink immediately as it registers. */
             s_clicks++;
             emit(G_CLICK_TICK, 0);
-            if (s_clicks >= RESET_CLICK_COUNT) {
-                emit(G_RESET, 0);
-                reset_seq();
-            } else {
-                s_state = ST_GAP;
-                s_gap_ms = 0;
-            }
+            s_state = ST_GAP;
+            s_gap_ms = 0;
         } else if (s_press_ms >= HOLD_MS) {
             u8 count = s_clicks + 1;
             if (count <= 3) {
                 emit_hold_start(count);
                 s_state = ST_HOLD;
-            } else if (s_clicks == OTA_TRIGGER_CLICKS) {
-                s_state = ST_OTA_HOLD;          /* wait for the long hold */
+            } else if (s_clicks == RESET_TRIGGER_CLICKS) {
+                s_state = ST_RESET_HOLD;        /* clicks + long hold -> reset */
             } else {
                 s_state = ST_SWALLOW;           /* undefined -> ignore    */
             }
@@ -146,14 +140,14 @@ void gestures_update(u8 pressed, u32 dt)
         }
         break;
 
-    case ST_OTA_HOLD:
+    case ST_RESET_HOLD:
         s_press_ms += dt;
         if (release_edge) {
-            /* Released before the OTA threshold: treat the 5th press as a
-             * click; the resulting 5-click sequence has no gesture. */
+            /* Released before the reset threshold: no gesture (the click
+             * sequence is simply discarded). */
             reset_seq();
-        } else if (s_press_ms >= OTA_TRIGGER_HOLD_MS) {
-            emit(G_OTA_TRIGGER, s_press_ms);
+        } else if (s_press_ms >= RESET_TRIGGER_HOLD_MS) {
+            emit(G_RESET, s_press_ms);
             s_state = ST_SWALLOW;
         }
         break;
@@ -195,7 +189,6 @@ const char *gesture_name(gesture_id_t id)
     case G_TRIPLE_HOLD_START: return "triple_hold_start";
     case G_TRIPLE_HOLD_STOP:  return "triple_hold_stop";
     case G_RESET:             return "reset";
-    case G_OTA_TRIGGER:       return "ota_trigger";
     case G_STUCK:             return "stuck";
     case G_CLICK_TICK:        return "click_tick";
     default:                  return "none";
