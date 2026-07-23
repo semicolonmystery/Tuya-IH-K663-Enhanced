@@ -19,10 +19,11 @@ the actual flashing. To achieve this, Pi TXD is connected to BOTH the SWS pad
 (via a resistor) and the RX pad, while Pi RXD connects to the TX pad:
 
 ```
-  Pi TXD ──┬──[ 1 kΩ ]── SWS pad on the K663
-           └────────────  RX pad on the K663
-  Pi RXD ───────────────  TX pad on the K663
-  Pi GND ───────────────  GND on the K663
+  Pi TXD ──┬─────────────────────  RX pad on the K663
+           └──[ 1 kΩ ]──┬──────── SWS pad on the K663
+                        │
+  Pi RXD ───────────────┴────────  TX pad on the K663
+  Pi GND ────────────────────────  GND on the K663
 ```
 
 The chip only listens for SWS right after it powers up / resets. On a PC the
@@ -50,8 +51,8 @@ GPIO*, so **remove the coin cell while flashing.**
 
 | Pi signal | BCM | Physical pin | Goes to K663 |
 |---|---|---|---|
-| UART **TXD** | GPIO14 | **pin 8**  | → 1 kΩ → SWS pad<br>→ RX pad (direct) |
-| UART **RXD** | GPIO15 | **pin 10** | → TX pad (direct) |
+| UART **TXD** | GPIO14 | **pin 8**  | → RX pad (direct)<br>→ 1 kΩ → SWS pad |
+| UART **RXD** | GPIO15 | **pin 10** | → TX pad (direct)<br>→ SWS pad (direct) |
 | **GND** | – | **pin 6** | GND |
 | reset/power ctrl | GPIO17 | **pin 11** | RESET pad *(reset mode)* **or** +3V3 *(power-cycle mode)* |
 | 3V3 (reset mode only) | – | **pin 1** | +3V3 |
@@ -59,10 +60,11 @@ GPIO*, so **remove the coin cell while flashing.**
 ### Power-cycle mode (no reset pad — the common case)
 
 ```
-  Pi pin 8  (GPIO14 TXD) ──┬──[1 kΩ]── SWS pad
-                           └──────────  RX pad
-  Pi pin 10 (GPIO15 RXD) ─────────────  TX pad
-  Pi pin 6  (GND) ────────────────────  GND
+  Pi pin 8  (GPIO14 TXD) ──┬─────────────────────  RX pad
+                           └──[ 1 kΩ ]──┬──────── SWS pad
+                                        │
+  Pi pin 10 (GPIO15 RXD) ───────────────┴────────  TX pad
+  Pi pin 6  (GND) ───────────────────────────────  GND
   Pi pin 11 (GPIO17) ────────────────  +3V3 of the module   (powers + resets it)
   (coin cell REMOVED)
 ```
@@ -71,20 +73,21 @@ GPIO*, so **remove the coin cell while flashing.**
 ### Reset mode (only if your board has a reset pad)
 
 ```
-  Pi pin 8  (GPIO14 TXD) ──┬──[1 kΩ]── SWS pad
-                           └──────────  RX pad
-  Pi pin 10 (GPIO15 RXD) ─────────────  TX pad
-  Pi pin 6  (GND) ────────────────────  GND
+  Pi pin 8  (GPIO14 TXD) ──┬─────────────────────  RX pad
+                           └──[ 1 kΩ ]──┬──────── SWS pad
+                                        │
+  Pi pin 10 (GPIO15 RXD) ───────────────┴────────  TX pad
+  Pi pin 6  (GND) ───────────────────────────────  GND
   Pi pin 1  (3V3) ───────────────────  +3V3 (VCC) of the module
   Pi pin 11 (GPIO17) ────────────────  RESET pad
 ```
 `flash.sh` config: defaults (`RST_GPIO=17`).
 
 > **If your K663 breaks out pads labelled `SWS RST VCC GND RX TX`** (common):
-> use exactly this reset-mode wiring — `SWS` & `RX`→pin 8 (with 1k on SWS),
-> `TX`→pin 10, `RST`→pin 11, `VCC`→pin 1, `GND`→pin 6. With VCC on the 3V3 rail
-> you can leave the coin cell out. Since Pi RXD is connected to the Tuya TX pad,
-> you can seamlessly use `debug.sh` without moving any wires!
+> use exactly this reset-mode wiring — `RX`→pin 8, `TX`→pin 10,
+> `SWS`→pin 10 AND through 1k to pin 8. `RST`→pin 11, `VCC`→pin 1, `GND`→pin 6.
+> With VCC on the 3V3 rail you can leave the coin cell out. Since Pi RXD is connected
+> to the Tuya TX pad, you can seamlessly use `debug.sh` without moving any wires!
 
 ### Finding the pads on the K663
 You must locate, on your specific PCB: **SWS**, **GND**, **+3V3 (VCC)**, and a
