@@ -5,12 +5,9 @@
 # The firmware bit-bangs debug output on DEBUG_TX_PIN (default PB1, see
 # app_config.h). Wire that pad to the Pi UART's RX.
 #
-# NOTE — UART contention: flashing (flash.sh) uses the Pi PL011 UART on the
-# single SWS wire to a *different* device pad. If you only have one Pi UART you
-# must move the wire between the SWS pad (to flash) and the PB1 debug pad (to
-# monitor). Easiest workflow: flash with flash.sh, then move the jumper to PB1
-# and run ./debug.sh. Alternatively use a second UART / USB-serial adapter for
-# debug so you can flash and monitor without re-wiring.
+# NOTE: With the 4-wire TlsrComProg825x flashing setup, the Pi RXD is already
+# permanently connected to the Tuya TX pad (PB1). You do not need to move any
+# wires between flashing and debugging! Just run flash.sh, then run debug.sh.
 #
 #   ./debug.sh            # stream lines from $PORT
 #   PORT=/dev/ttyUSB0 ./debug.sh

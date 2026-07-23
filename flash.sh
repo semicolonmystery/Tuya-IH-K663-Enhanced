@@ -38,8 +38,10 @@ PWR_ACTIVE_LOW="${PWR_ACTIVE_LOW:-0}" # 1: power CUT by driving LOW (e.g. P-FET/
 
 # Tooling
 HERE="$(cd "$(dirname "$0")" && pwd)"
-FLASHER="${FLASHER:-$HERE/tools/TLSR825xComFlasher.py}"
-FLASHER_URL="https://raw.githubusercontent.com/pvvx/TlsrComSwireWriter/master/TLSR825xComFlasher.py"
+FLASHER="${FLASHER:-$HERE/tools/TlsrComProg.py}"
+FLASHER_URL="https://raw.githubusercontent.com/pvvx/TlsrComProg825x/master/TlsrComProg.py"
+FLOADER="${FLOADER:-$HERE/tools/floader.bin}"
+FLOADER_URL="https://raw.githubusercontent.com/pvvx/TlsrComProg825x/master/floader.bin"
 BIN="${BIN:-$HERE/build/bin/ih-k663.bin}"
 FLASH_SIZE=0x80000                    # 512 KB
 # ------------------------------------------------------------------------------
@@ -52,17 +54,18 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     exec sudo -E PORT="$PORT" BAUD="$BAUD" TACT_MS="$TACT_MS" \
         GPIOCHIP="$GPIOCHIP" RST_GPIO="$RST_GPIO" PWR_GPIO="$PWR_GPIO" \
         RST_ACTIVE_LOW="$RST_ACTIVE_LOW" PWR_ACTIVE_LOW="$PWR_ACTIVE_LOW" \
-        FLASHER="$FLASHER" BIN="$BIN" bash "$0" "$@"
+        FLASHER="$FLASHER" FLOADER="$FLOADER" BIN="$BIN" bash "$0" "$@"
 fi
 
 # ---- Preflight -------------------------------------------------------------
 preflight() {
     command -v gpioset >/dev/null 2>&1 || die "libgpiod not found. Install: sudo apt install gpiod"
     [[ -e "$PORT" ]] || die "serial port $PORT not found (enable the PL011 UART / check wiring)"
-    if [[ ! -f "$FLASHER" ]]; then
-        log "flasher not present, downloading TLSR825xComFlasher.py ..."
+    if [[ ! -f "$FLASHER" || ! -f "$FLOADER" ]]; then
+        log "flasher tools not present, downloading TlsrComProg825x ..."
         mkdir -p "$(dirname "$FLASHER")"
         curl -fsSL "$FLASHER_URL" -o "$FLASHER" || die "could not download flasher; place it at $FLASHER"
+        curl -fsSL "$FLOADER_URL" -o "$FLOADER" || die "could not download floader; place it at $FLOADER"
     fi
     [[ -n "$RST_GPIO" || -n "$PWR_GPIO" ]] || die "set RST_GPIO or PWR_GPIO"
 }
@@ -93,7 +96,7 @@ run_flasher() {
     log "activating via GPIO $line (${PWR_GPIO:+power}${PWR_GPIO:-reset}) on $GPIOCHIP"
     gpio_hold "$line" "$(assert_level)"     # 1) hold chip in reset / power off
     sleep 0.05
-    python3 "$FLASHER" -p "$PORT" -b "$BAUD" -t "$TACT_MS" "$@" &
+    python3 "$FLASHER" -p "$PORT" -b "$BAUD" -t "$TACT_MS" --fldr "$FLOADER" "$@" &
     local fpid=$!
     sleep 0.10
     gpio_release                            # 2) stop driving assert level (line free)
@@ -128,7 +131,7 @@ cmd_app() {
     preflight
     [[ -f "$BIN" ]] || die "firmware not found: $BIN (run ./build.sh first)"
     log "writing $BIN -> 0x0 ${run:+(+run)}"
-    run_flasher $run wf 0x0 "$BIN" || die "flash write failed"
+    run_flasher $run we 0x0 "$BIN" || die "flash write failed"
     log "done."
 }
 
@@ -149,7 +152,7 @@ cmd_restore() {
         die "refusing to restore: $file is $sz bytes, expected $FLASH_SIZE (or 0x40000). Override by editing the check."
     fi
     log "restoring $file -> 0x0 ($sz bytes)"
-    run_flasher wf 0x0 "$file" || die "restore failed"
+    run_flasher we 0x0 "$file" || die "restore failed"
     log "restored."
 }
 

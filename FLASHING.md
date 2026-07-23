@@ -1,9 +1,8 @@
 # Flashing the IH-K663 from a Raspberry Pi (4B or CM4)
 
-This flashes the TLSR8258 over its **single-wire SWS** interface using the Pi's
-built-in UART and `flash.sh` (which wraps pvvx's `TLSR825xComFlasher.py`). The
-wiring and Pi setup below are the same on a Pi 4B and a CM4 — both use the
-standard 40-pin header.
+This flashes the TLSR8258 over a 4-wire connection using the Pi's built-in UART
+and `flash.sh` (which wraps pvvx's `TlsrComProg825x`). The wiring and Pi setup
+below are the same on a Pi 4B and a CM4 — both use the standard 40-pin header.
 
 > **Read this once fully before soldering.** Two things bite everyone: the Pi
 > serial port must be the real **PL011** UART (not the mini-UART), and the chip
@@ -14,15 +13,16 @@ standard 40-pin header.
 
 ## 1. How SWS flashing works here
 
-The TLSR8258 talks a one-wire protocol (SWS / "single wire"). pvvx's tool
-emulates it over a normal UART by tying **TX and RX together onto that one
-wire**, TX through a resistor:
+The TLSR8258 talks a one-wire protocol (SWS). pvvx's `TlsrComProg825x` tool uses
+SWS to push a custom bootloader into RAM, and then uses a fast standard UART for
+the actual flashing. To achieve this, Pi TXD is connected to BOTH the SWS pad
+(via a resistor) and the RX pad, while Pi RXD connects to the TX pad:
 
 ```
-  Pi TXD ──[ 1 kΩ ]──┐
-                     ├──────── SWS pad on the K663
-  Pi RXD ────────────┘
-  Pi GND ─────────────────────  GND on the K663
+  Pi TXD ──┬──[ 1 kΩ ]── SWS pad on the K663
+           └────────────  RX pad on the K663
+  Pi RXD ───────────────  TX pad on the K663
+  Pi GND ───────────────  GND on the K663
 ```
 
 The chip only listens for SWS right after it powers up / resets. On a PC the
@@ -50,8 +50,8 @@ GPIO*, so **remove the coin cell while flashing.**
 
 | Pi signal | BCM | Physical pin | Goes to K663 |
 |---|---|---|---|
-| UART **TXD** | GPIO14 | **pin 8**  | → 1 kΩ → SWS pad |
-| UART **RXD** | GPIO15 | **pin 10** | → SWS pad (direct) |
+| UART **TXD** | GPIO14 | **pin 8**  | → 1 kΩ → SWS pad<br>→ RX pad (direct) |
+| UART **RXD** | GPIO15 | **pin 10** | → TX pad (direct) |
 | **GND** | – | **pin 6** | GND |
 | reset/power ctrl | GPIO17 | **pin 11** | RESET pad *(reset mode)* **or** +3V3 *(power-cycle mode)* |
 | 3V3 (reset mode only) | – | **pin 1** | +3V3 |
@@ -59,9 +59,10 @@ GPIO*, so **remove the coin cell while flashing.**
 ### Power-cycle mode (no reset pad — the common case)
 
 ```
-  Pi pin 8  (GPIO14 TXD) ──[1 kΩ]──┬── SWS pad
-  Pi pin 10 (GPIO15 RXD) ──────────┘
-  Pi pin 6  (GND) ───────────────────  GND
+  Pi pin 8  (GPIO14 TXD) ──┬──[1 kΩ]── SWS pad
+                           └──────────  RX pad
+  Pi pin 10 (GPIO15 RXD) ─────────────  TX pad
+  Pi pin 6  (GND) ────────────────────  GND
   Pi pin 11 (GPIO17) ────────────────  +3V3 of the module   (powers + resets it)
   (coin cell REMOVED)
 ```
@@ -70,26 +71,27 @@ GPIO*, so **remove the coin cell while flashing.**
 ### Reset mode (only if your board has a reset pad)
 
 ```
-  Pi pin 8  (GPIO14 TXD) ──[1 kΩ]──┬── SWS pad
-  Pi pin 10 (GPIO15 RXD) ──────────┘
-  Pi pin 6  (GND) ───────────────────  GND
+  Pi pin 8  (GPIO14 TXD) ──┬──[1 kΩ]── SWS pad
+                           └──────────  RX pad
+  Pi pin 10 (GPIO15 RXD) ─────────────  TX pad
+  Pi pin 6  (GND) ────────────────────  GND
   Pi pin 1  (3V3) ───────────────────  +3V3 (VCC) of the module
   Pi pin 11 (GPIO17) ────────────────  RESET pad
 ```
 `flash.sh` config: defaults (`RST_GPIO=17`).
 
 > **If your K663 breaks out pads labelled `SWS RST VCC GND RX TX`** (common):
-> use exactly this reset-mode wiring — `SWS`→rig, `RST`→pin 11, `VCC`→pin 1,
-> `GND`→pin 6. The `RX` pad is **not used**. The `TX` pad is the chip's debug
-> UART output — leave it disconnected while flashing; wire it for monitoring
-> (next section). With VCC on the 3V3 rail you can leave the coin cell out.
+> use exactly this reset-mode wiring — `SWS` & `RX`→pin 8 (with 1k on SWS),
+> `TX`→pin 10, `RST`→pin 11, `VCC`→pin 1, `GND`→pin 6. With VCC on the 3V3 rail
+> you can leave the coin cell out. Since Pi RXD is connected to the Tuya TX pad,
+> you can seamlessly use `debug.sh` without moving any wires!
 
 ### Finding the pads on the K663
 You must locate, on your specific PCB: **SWS**, **GND**, **+3V3 (VCC)**, and a
 **RESET** pad if present. On TLSR8258 Tuya modules the SWS test point is usually a
-small labeled/again exposed pad near the MCU. The authoritative rig drawing (incl.
-the exact resistor) is pvvx's schematic:
-<https://github.com/pvvx/TlsrComSwireWriter/blob/master/schematicc.gif>
+small labeled/again exposed pad near the MCU. The authoritative rig drawing
+(showing the resistor wiring) is pvvx's schematic:
+<https://github.com/pvvx/TlsrComProg825x/blob/main/Doc/img/schematic.gif>
 (1 kΩ works well; 1–4.7 kΩ is the usable range.)
 
 ---
@@ -188,12 +190,10 @@ pad is not needed (debug is TX-only).
 ./debug.sh -t       # with host timestamps
 ```
 
-**UART sharing:** flashing uses the SWS pad on pins 8+10; debug uses PB1 on
-pin 10. With a single Pi UART you move the **pin-10 (RXD)** wire between the SWS
-pad (to flash) and PB1 (to monitor). Easiest flow: flash, then move that one
-jumper to PB1 and run `./debug.sh`. If you'd rather flash and monitor without
-re-wiring, use a **second** UART / USB-serial adapter for PB1 and point
-`debug.sh` at it: `PORT=/dev/ttyUSB0 ./debug.sh`.
+**Seamless Debugging:** Because the 4-wire flashing setup permanently connects
+Pi RXD (pin 10) to the Tuya TX pad, you do **not** need to move any wires or
+jumpers to switch between flashing and monitoring! Just run `./flash.sh`, and
+then run `./debug.sh` to see the logs.
 
 ---
 
