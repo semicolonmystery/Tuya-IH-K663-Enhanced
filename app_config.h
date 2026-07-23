@@ -50,9 +50,13 @@
 #define DIAG_VERBOSE              1
 #endif
 /* DIAG_DISABLE_SLEEP: 1 compiles out drv_pm_lowPowerEnter() so the idle task
- * never deep-sleeps — used to bisect whether the sleep policy is the culprit. */
+ * never deep-sleeps — used to bisect whether the sleep policy is the culprit.
+ * Currently 1: the in-place deep-retention wake leaves the system clock/analog
+ * pull-ups unrestored (button pin floats low, UART garbles), so deep sleep is
+ * disabled until that wake path is fixed. Battery life is not representative in
+ * this state; the button/gesture/network pipeline is fully functional. */
 #ifndef DIAG_DISABLE_SLEEP
-#define DIAG_DISABLE_SLEEP        0
+#define DIAG_DISABLE_SLEEP        1
 #endif
 #define DIAG_HEARTBEAT_MS         1000
 

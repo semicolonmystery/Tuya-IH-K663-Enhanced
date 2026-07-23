@@ -62,10 +62,13 @@ static int button_tick(void *arg)
     }
 #endif
 
-    /* Stop sampling once the button is released and no gesture is resolving —
-     * this lets the idle task enter deep sleep (nearest timer becomes the long
-     * poll, not this 10 ms tick). A new press re-arms via buttons_poll(). */
-    if (!s_committed && !gestures_busy()) {
+    /* Stop sampling only once the button is fully idle: physically released
+     * (raw), debounced-released, and no gesture resolving. The raw check is
+     * essential — without it the tick self-stops on the very first sample of a
+     * press (before DEBOUNCE_MS commits s_committed), so a press could never
+     * register. When idle the tick stops so the device can deep-sleep; a new
+     * press re-arms via buttons_poll(). */
+    if (!s_committed && !gestures_busy() && !read_pressed()) {
         s_tick = NULL;
         return -1;
     }
