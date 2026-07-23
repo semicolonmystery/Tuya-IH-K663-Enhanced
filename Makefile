@@ -51,10 +51,15 @@ LINKER_SCRIPT := $(SDK_PATH)/platform/boot/8258/boot_8258.link
 LIBRARY_PATHS := -L$(SDK_PATH)/zigbee/lib/tc32 -L$(SDK_PATH)/platform/lib
 
 # ---- Compiler flags (matched to the SDK / reference build) ----
+# -fpack-struct is REQUIRED and must match the SDK: the prebuilt stack libs and
+# the SDK sources are all built packed, so app code passing structs to the stack
+# (simple descriptor, cluster/attr tables, epInfo, ...) must be packed too — an
+# unpacked app reads/writes struct fields at the wrong offsets and the stack ends
+# up calling a garbage function pointer during endpoint/cluster registration.
 GCC_FLAGS := \
 	-O2 -ffunction-sections -fdata-sections -Wall -fshort-enums \
 	-finline-small-functions -std=gnu99 -funsigned-char -fshort-wchar \
-	-fms-extensions -nostartfiles -nostdlib -MMD -MP
+	-fms-extensions -fpack-struct -nostartfiles -nostdlib -MMD -MP
 
 ASM_FLAGS := \
 	-fomit-frame-pointer -fshort-enums -Wall -Wpacked -Wcast-align \
