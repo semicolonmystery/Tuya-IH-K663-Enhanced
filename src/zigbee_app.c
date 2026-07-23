@@ -380,6 +380,13 @@ static void led_boot_blink(void)
     }
 }
 
+/* ---- TEMP diagnostics: independent main-loop liveness via the poll path ---- */
+static volatile u32 s_pollCount;
+static void app_idle_poll(void)
+{
+    if (++s_pollCount >= 200000) { s_pollCount = 0; printf("poll_alive\n"); }
+}
+
 /* ---------------------------------------------------------------------------
  * Init
  * ------------------------------------------------------------------------- */
@@ -414,19 +421,22 @@ void user_init(bool isRetention)
         led_init();
         gestures_init(on_gesture);
         battery_init();
+        printf("ck0 pre-stack\n");
 
         app_stack_init();
+        printf("ck1 stack\n");
         app_zb_init();
+        printf("ck2 zb\n");
 
         u8 repower = drv_pm_deepSleep_flag_get() ? 0 : 1;
         bdb_init((af_simple_descriptor_t *)&app_simpleDesc,
                  &g_bdbCommissionSetting, &g_appBdbCb, repower);
+        printf("ck3 bdb\n");
 
-        /* Periodic app timers MUST be scheduled after bdb_init(): stack init
-         * calls ev_timer_init() which memset-wipes the whole timer pool, so any
-         * timer created earlier would silently never fire. */
         buttons_init();
+        ev_on_poll(EV_POLL_IDLE, app_idle_poll);   /* diag: proves the loop runs */
         TL_ZB_TIMER_SCHEDULE(battery_timer_cb, NULL, BATTERY_MEASURE_MIN_INTERVAL_S * 1000);
+        printf("ck4 uinit-done\n");
     } else {
         mac_phyReconfig();
     }
