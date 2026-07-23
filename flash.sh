@@ -75,6 +75,7 @@ preflight() {
 #      needs `--mode=wait`; upgrade to Bookworm or adjust gpio_hold accordingly.
 GPIO_HOLD_PID=""
 gpio_hold() {   # <line> <value>  — drive and hold until gpio_release
+    gpio_release
     gpioset -c "$GPIOCHIP" "$1=$2" &
     GPIO_HOLD_PID=$!
 }
@@ -137,6 +138,7 @@ cmd_app() {
         local line; line="$(active_line)"
         gpio_hold "$line" "$(assert_level)"
         sleep 0.1
+        gpio_release
         gpio_hold "$line" "$(release_level)"
         sleep 0.1
         gpio_release
