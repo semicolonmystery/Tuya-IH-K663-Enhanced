@@ -27,6 +27,9 @@ bool buttons_active(void);
 /* Current debounced state (1 = pressed). */
 bool button_is_pressed(void);
 
+/* Instantaneous (undebounced) pin read — 1 = pressed. Diagnostics only. */
+bool buttons_raw_pressed(void);
+
 #if PM_ENABLE
 /* Program the initial PM wake polarity (wake-on-press). Call once at boot in
  * place of a direct drv_pm_wakeupPinConfig() — the buttons module owns the pin. */

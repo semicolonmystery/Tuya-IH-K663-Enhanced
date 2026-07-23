@@ -42,6 +42,20 @@
 #define DEBUG_UART_ENABLED        1        /* (1) bring-up; set 0 for release   */
 #endif
 
+/* ---- Temporary bring-up diagnostics (remove before release) --------------- */
+/* DIAG_VERBOSE: 1s heartbeat dumping the sleep-gate booleans + raw button, plus
+ * button-press / sleep-transition traces. Lets the UART pinpoint whether the
+ * device is looping, deep-sleeping, or hung, and whether presses are seen. */
+#ifndef DIAG_VERBOSE
+#define DIAG_VERBOSE              1
+#endif
+/* DIAG_DISABLE_SLEEP: 1 compiles out drv_pm_lowPowerEnter() so the idle task
+ * never deep-sleeps — used to bisect whether the sleep policy is the culprit. */
+#ifndef DIAG_DISABLE_SLEEP
+#define DIAG_DISABLE_SLEEP        0
+#endif
+#define DIAG_HEARTBEAT_MS         1000
+
 /* Battery sensing: use the TLSR8258 internal supply-rail ADC path (no divider).
  * Fallback to an external ADC channel only if the internal path is unusable.  */
 #define BATTERY_USE_EXTERNAL_ADC  0        /* (0)                               */

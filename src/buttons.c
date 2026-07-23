@@ -6,6 +6,7 @@
 #include "app_config.h"
 #include "buttons.h"
 #include "gestures.h"
+#include "debug.h"
 
 static ev_timer_event_t *s_tick;       /* NULL when not sampling           */
 static u8  s_committed;                 /* debounced pressed state          */
@@ -116,6 +117,9 @@ void buttons_poll(void)
     /* Re-arm sampling on a press (including a press that just woke us from deep
      * sleep — the live pin is sampled here so the waking press is processed). */
     if (!s_tick && read_pressed()) {
+#if DIAG_VERBOSE
+        DBG("poll:press\n");
+#endif
         s_committed = 0;
         s_cand = 1;
         s_cand_ms = 0;
@@ -151,4 +155,9 @@ void buttons_stuck(void)
 bool button_is_pressed(void)
 {
     return s_committed != 0;
+}
+
+bool buttons_raw_pressed(void)
+{
+    return read_pressed() != 0;
 }

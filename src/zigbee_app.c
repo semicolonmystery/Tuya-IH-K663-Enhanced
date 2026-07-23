@@ -482,6 +482,20 @@ static int battery_timer_cb(void *arg)
     return 0;   /* repeat */
 }
 
+#if DIAG_VERBOSE
+/* Bring-up heartbeat: dumps the sleep-gate booleans + raw button every second.
+ * If these lines keep coming the main loop is alive (and waking from any sleep);
+ * if they stop, the device is hung. `btn` is the live pin (1 = pressed). */
+static int diag_hb_cb(void *arg)
+{
+    DBG("hb idle=%d task=%d stk=%d btn=%d act=%d gst=%d led=%d\n",
+        (int)bdb_isIdle(), (int)zb_isTaskDone(), (int)tl_stackBusy(),
+        (int)buttons_raw_pressed(), (int)buttons_active(),
+        (int)gestures_busy(), (int)led_busy());
+    return 0;   /* repeat */
+}
+#endif
+
 /* ---------------------------------------------------------------------------
  * Idle task (F4) — runs every main-loop pass. Re-arms the button sampler on a
  * press (incl. one that woke us), then enters deep sleep with retention when
@@ -492,10 +506,16 @@ static void app_task(void)
 {
     buttons_poll();
 
-#if PM_ENABLE
+#if PM_ENABLE && !DIAG_DISABLE_SLEEP
     if (bdb_isIdle() && zb_isTaskDone() && !tl_stackBusy()
         && !buttons_active() && !gestures_busy() && !led_busy()) {
+#if DIAG_VERBOSE
+        DBG("sleep>\n");
+#endif
         drv_pm_lowPowerEnter();
+#if DIAG_VERBOSE
+        DBG("<wake btn=%d\n", (int)buttons_raw_pressed());
+#endif
         /* Deep-retention can drop GPIO/analog config — re-apply on wake. This
          * also samples the live button so a waking press is not lost (F1). */
         led_init();
@@ -563,6 +583,9 @@ void user_init(bool isRetention)
 
         buttons_init();
         TL_ZB_TIMER_SCHEDULE(battery_timer_cb, NULL, BATTERY_MEASURE_MIN_INTERVAL_S * 1000);
+#if DIAG_VERBOSE
+        TL_ZB_TIMER_SCHEDULE(diag_hb_cb, NULL, DIAG_HEARTBEAT_MS);
+#endif
 
         /* Idle task drives the sleep policy (F4). */
         ev_on_poll(EV_POLL_IDLE, app_task);
