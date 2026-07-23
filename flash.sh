@@ -25,7 +25,7 @@ set -euo pipefail
 # ------------------------------ CONFIG ----------------------------------------
 PORT="${PORT:-/dev/serial0}"          # Pi PL011 UART wired to the SWS pad
 BAUD="${BAUD:-230400}"                # -b: SWS UART baud
-TACT_MS="${TACT_MS:-600}"             # -t: flasher activation window (ms). Tune!
+TACT_MS="${TACT_MS:-1500}"             # -t: flasher activation window (ms). Tune!
 
 # GPIO activation. Preferred: RST_GPIO drives the module reset pad.
 # Fallback for boards with no reset pad: set PWR_GPIO instead (switches module
@@ -98,7 +98,7 @@ run_flasher() {
     sleep 0.05
     python3 "$FLASHER" -p "$PORT" -b "$BAUD" -t "$TACT_MS" --fldr "$FLOADER" "$@" &
     local fpid=$!
-    sleep 0.10
+    sleep 0.60
     gpio_release                            # 2) stop driving assert level (line free)
     gpio_hold "$line" "$(release_level)"    # 3) drive run/power-on; chip boots into window
     wait "$fpid" || rc=$?                    # 4) flasher syncs and does its work
