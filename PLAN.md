@@ -118,12 +118,19 @@ implicit "test 0".
   + interpolation, PowerConfig BatteryVoltage/PercentageRemaining, measure/report
   intervals, sample when radio idle.
 
-- [x] **M10 — Pairing / factory reset (F10).** `RESET_CLICK_COUNT` (10) rapid
-  clicks → leave + clear + steering for `PAIR_WINDOW_MS` with pairing LED.
-  Steering only via this gesture.
+- [x] **M10 — Pairing / factory reset (F10).** `RESET_TRIGGER_CLICKS` (4) clicks
+  then a press held `RESET_TRIGGER_HOLD_MS` (5 s) → leave + clear + steering for
+  `PAIR_WINDOW_MS` with pairing LED. Steering only via this gesture. (Originally
+  10 rapid clicks; changed by request to reuse the freed OTA trigger gesture.)
 
-- [ ] **M11 — OTA (F11).** SDK OTA client, trigger = 4 clicks + 5 s hold, flash
-  map documented, OTA image via SDK tooling (`tl_check_fw.sh`), Z2M OTA index JSON.
+- [x] **M11 — OTA (F11).** SDK OTA client wired up (`ota_init(OTA_TYPE_CLIENT, …)`,
+  OTA Upgrade cluster advertised in the simple descriptor's output list). OTA is
+  **Z2M-initiated only** — the on-device trigger gesture was dropped by request,
+  and the freed 4-clicks + 5 s hold now drives pairing/factory reset instead.
+  During a session the poll rate goes to `QUEUE_POLL_RATE`, deep sleep is held
+  off and the LED pulses; `OTA_SESSION_MAX_S` caps a stalled transfer so it
+  cannot drain the cell. `.ota` image + Z2M OTA index JSON are published per
+  release, with the file version bumped every build.
 
 - [x] **M12 — Z2M converter (F12).** `ts0041-enhanced.js` with exact `action` values,
   `action_duration`, battery, `ota: true`, `configure` bindings/reporting.
@@ -136,9 +143,12 @@ implicit "test 0".
   verified; GPIO/serial behaviour must be confirmed on the Pi. Assumes libgpiod
   v2 (Bookworm).
 
-- [ ] **M14 — Docs & acceptance.** README: toolchain, build, flashing/wiring,
-  pairing, OTA, binding, flash map, F8 gesture code table, `app_config.h` tuning
-  guide (reconnect-speed vs battery). Acceptance test scripts (section 8).
+- [~] **M14 — Docs & acceptance.** README now covers toolchain, build,
+  flashing/wiring, the full gesture table, pairing/reset, Z2M converter install +
+  binding, and OTA setup (index override URL, re-interview caveat). Still open:
+  flash-map section, `app_config.h` tuning guide (reconnect-speed vs battery),
+  and the acceptance test scripts (section 8) — plus a measured coin-cell
+  battery-life figure, which needs a long run on hardware.
 
 ## Findings that shape later milestones
 - **F8 wire format:** the SDK (v3.7.2.0) ships **Multistate Input** but **no

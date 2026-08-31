@@ -12,6 +12,9 @@
 #include "zcl_include.h"
 #include "general/zcl_multistate_input.h"
 #include "bdb.h"
+#if ZCL_OTA_SUPPORT
+#include "ota.h"
+#endif
 
 #include "app_config.h"
 #include "zigbee_app.h"
@@ -58,6 +61,13 @@ static const u16 app_outClusterList[] = {
     ZCL_CLUSTER_GEN_ON_OFF,
     ZCL_CLUSTER_GEN_LEVEL_CONTROL,
     ZCL_CLUSTER_LIGHTING_COLOR_CONTROL,
+#if ZCL_OTA_SUPPORT
+    /* OTA Upgrade — this device is the OTA *client*; the coordinator (Z2M) is
+     * the server, so the cluster belongs in the output list. Z2M reads this
+     * during the interview, so a device interviewed on older firmware must be
+     * re-interviewed (or re-paired) before Z2M will offer it an update. */
+    ZCL_CLUSTER_OTA,
+#endif
 };
 
 #define APP_IN_CLUSTER_NUM   (sizeof(app_inClusterList)  / sizeof(app_inClusterList[0]))
@@ -544,6 +554,87 @@ static int diag_hb_cb(void *arg)
 #endif
 
 /* ---------------------------------------------------------------------------
+ * OTA (F11) — client only; the session is always initiated from Z2M.
+ *
+ * There is no on-device OTA gesture: Z2M queues the image and the device picks
+ * it up on its next poll (a button press wakes it, so an update starts promptly
+ * after any press). During a download we poll fast and stay awake — deep sleep
+ * between 250 ms block requests would make the transfer crawl — and a session
+ * cap makes sure a stalled download can never pin the radio awake and flatten
+ * the cell.
+ * ------------------------------------------------------------------------- */
+#if ZCL_OTA_SUPPORT
+static ota_preamble_t g_otaInfo = {
+    .fileVer          = FILE_VERSION,
+    .imageType        = IMAGE_TYPE,
+    .manufacturerCode = MANUFACTURER_CODE_TELINK,
+};
+
+static u8 s_otaActive;                       /* download in progress          */
+static ev_timer_event_t *s_otaCapTimer;      /* OTA_SESSION_MAX_S watchdog    */
+#define OTA_BUSY()   (s_otaActive != 0)
+
+static void ota_session_end(void)
+{
+    s_otaActive = 0;
+    zb_setPollRate(POLL_RATE);
+    led_stop();
+    if (s_otaCapTimer) {
+        TL_ZB_TIMER_CANCEL(&s_otaCapTimer);
+    }
+}
+
+static int ota_session_cap_cb(void *arg)
+{
+    /* Stalled download: give up so the device can sleep again. Z2M can retry. */
+    DBG("ota=timeout\n");
+    s_otaCapTimer = NULL;        /* about to expire — don't cancel it below   */
+    ota_session_end();
+    return -1;
+}
+
+static void app_otaProcessMsgHandler(u8 evt, u8 status)
+{
+    switch (evt) {
+    case OTA_EVT_START:
+        if (status == ZCL_STA_SUCCESS) {
+            DBG("ota=start\n");
+            s_otaActive = 1;
+            zb_setPollRate(QUEUE_POLL_RATE);      /* pull blocks quickly      */
+            led_pulse(LED_OTA_PULSE_MS);          /* slow pulse while loading */
+            if (!s_otaCapTimer) {
+                s_otaCapTimer = TL_ZB_TIMER_SCHEDULE(ota_session_cap_cb, NULL,
+                                                     OTA_SESSION_MAX_S * 1000);
+            }
+        }
+        break;
+
+    case OTA_EVT_IMAGE_DONE:
+        DBG("ota=image_done\n");
+        zb_setPollRate(POLL_RATE);
+        break;
+
+    case OTA_EVT_COMPLETE:
+        DBG("ota=complete st=%d\n", (int)status);
+        ota_session_end();
+        if (status == ZCL_STA_SUCCESS) {
+            ota_mcuReboot();     /* boots the new image — does not return */
+        }
+        /* On failure we deliberately do NOT auto re-query
+         * (OTA_AUTO_QUERY_ENABLED 0): updates stay Z2M-initiated. */
+        break;
+
+    default:
+        break;
+    }
+}
+
+static ota_callBack_t g_appOtaCb = { app_otaProcessMsgHandler };
+#else
+#define OTA_BUSY()   (0)
+#endif
+
+/* ---------------------------------------------------------------------------
  * Idle task (F4) — runs every main-loop pass. Re-arms the button sampler on a
  * press (incl. one that woke us), then enters deep sleep with retention when
  * nothing needs the CPU. The stack schedules its own wakeups (poll/rejoin), so
@@ -555,7 +646,8 @@ static void app_task(void)
 
 #if PM_ENABLE && !DIAG_DISABLE_SLEEP
     if (bdb_isIdle() && zb_isTaskDone() && !tl_stackBusy()
-        && !buttons_active() && !gestures_busy() && !led_busy()) {
+        && !buttons_active() && !gestures_busy() && !led_busy()
+        && !OTA_BUSY()) {
         /* Wake on the opposite of the button's current level (press when idle,
          * release when stuck) so a wedged pin can't hold us awake. */
         buttons_arm_wake();
@@ -607,6 +699,11 @@ static void app_zb_init(void)
     af_endpointRegister(APP_ENDPOINT, (af_simple_descriptor_t *)&app_simpleDesc,
                         zcl_rx_handler, NULL);
     zcl_register(APP_ENDPOINT, APP_CLUSTER_NUM, (zcl_specClusterInfo_t *)g_appClusterList);
+
+#if ZCL_OTA_SUPPORT
+    ota_init(OTA_TYPE_CLIENT, (af_simple_descriptor_t *)&app_simpleDesc,
+             &g_otaInfo, &g_appOtaCb);
+#endif
 }
 
 void user_init(bool isRetention)
