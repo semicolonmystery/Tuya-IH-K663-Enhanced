@@ -231,7 +231,10 @@ Run against a flashed device joined to Z2M, watching `./debug.sh`.
 9. **Offline cache (F5)** — with the coordinator down, perform several gestures;
    on reconnect `cache=flush` appears and the actions arrive as a few messages,
    not a verbatim replay.
-10. **Battery (F7)** — Z2M shows battery % and voltage.
+10. **Battery (F7)** — Z2M shows battery % and voltage. Check readings taken
+    *after* the device has slept (they arrive hourly), not just the one at boot:
+    the ADC config is lost across deep-retention wake, so a regression here shows
+    up as wildly wrong values (e.g. `batt=584 pct=0`) while the cell is fine.
 11. **OTA (F11)** — with a newer release published, Z2M offers an update; press
     the button to wake the device; expect `ota=start` → `ota=image_done` →
     `ota=complete st=0`, then a reboot banner showing the **new** version. A full

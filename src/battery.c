@@ -37,6 +37,16 @@ static u8 mv_to_pct(u16 mv)
 
 static u16 read_mv(void)
 {
+    /* Re-run the ADC base init on every measurement. Deep-retention wake resets
+     * into main() and loses the analog/ADC configuration (the same class of bug
+     * that left the button pin floating), and user_init only ran battery_init()
+     * on a cold boot — so from the first sleep onward every hourly reading came
+     * back as garbage (observed: batt=584 pct=0, batt=1921 pct=0, ... while the
+     * cell was actually full). drv_adc_init() is an idempotent hardware init and
+     * this runs at most once an hour, so doing it here is cheap and can't drift
+     * out of config again. */
+    drv_adc_init();
+
 #if BATTERY_USE_EXTERNAL_ADC
     drv_adc_mode_pin_set(DRV_ADC_BASE_MODE, (GPIO_PinTypeDef)BATTERY_ADC_PIN);
 #else
@@ -51,8 +61,7 @@ static u16 read_mv(void)
 
 void battery_init(void)
 {
-    drv_adc_init();
-    battery_update();
+    battery_update();   /* read_mv() does the ADC init */
 }
 
 void battery_update(void)
