@@ -14,10 +14,12 @@
  *        3 = triple_click        8 = triple_hold_start   9 = triple_hold_stop
  *  - Cluster genMultistateInput (0x0012), manufacturer-specific attribute 0xF001
  *    (61441 decimal, uint32, manufacturer code 0x1141 / Telink): carries the
- *    duration (ms) of the hold gesture that just ended. It is reported
- *    IMMEDIATELY BEFORE the matching *_hold_stop presentValue report, so we
- *    stash it per-device and attach it as `action_duration` when the next
- *    presentValue report is a *_hold_stop.
+ *    duration (ms) of the hold gesture that just ended. The firmware reports it
+ *    just AFTER the matching *_hold_stop presentValue report (so it is the last
+ *    thing published for a hold, and Z2M's momentary-`action` reset cannot clear
+ *    it). We do NOT rely on that ordering though: the value is remembered
+ *    per-device the moment it is seen and re-asserted as `action_duration` on
+ *    every subsequent report, so it persists instead of flashing to null.
  *  - Cluster genPowerCfg (0x0001):
  *      batteryPercentageRemaining (0x0021) is in half-percent units (divide by 2).
  *      batteryVoltage (0x0020) is in 100 mV units (multiply by 0.1 for volts).
@@ -79,16 +81,13 @@ const ACTION_LOOKUP = {
     9: 'triple_hold_stop',
 };
 
-// Per-device store for the hold duration seen on the 0xF001 report that
-// precedes a *_hold_stop presentValue report. Keyed by ieeeAddr so multiple
-// remotes on the same network don't clobber each other's pending value.
-const pendingHoldDurations = new Map();
-
-// Per-device store for the LAST hold duration, kept indefinitely. Z2M treats
-// `action` (and, in practice, the related `action_*` fields) as momentary and
-// clears them shortly after publishing, so `action_duration` would flash then
-// go back to null. To make it persist we re-assert the last known duration on
-// every action report. Keyed by ieeeAddr.
+// Per-device store for the LAST hold duration, kept indefinitely and keyed by
+// ieeeAddr. The firmware sends the duration (0xF001) and the *_hold_stop action
+// (presentValue) as two SEPARATE reports, which Z2M may deliver/parse in either
+// order (manufacturer-specific vs standard attribute take different herdsman
+// paths). So we do NOT rely on ordering: we update this the instant a duration
+// is seen, and re-assert it on every action so `action_duration` persists in
+// Z2M state instead of flashing to null.
 const lastHoldDurations = new Map();
 
 const fzLocal = {
@@ -99,12 +98,12 @@ const fzLocal = {
             const result = {};
             const ieeeAddr = meta.device.ieeeAddr;
 
-            // 1) Manufacturer-specific hold-duration attribute (0xF001).
-            //    Just stash it - it arrives in its own report, immediately
-            //    before the matching *_hold_stop presentValue report.
+            // 1) Manufacturer-specific hold-duration attribute (0xF001). Update
+            //    the persisted value the moment we see it - independent of
+            //    whether it arrives before or after the presentValue report.
             const holdDuration = extractHoldDuration(msg);
             if (holdDuration !== undefined) {
-                pendingHoldDurations.set(ieeeAddr, holdDuration);
+                lastHoldDurations.set(ieeeAddr, holdDuration);
             }
 
             // 2) The gesture code itself, via presentValue.
@@ -118,24 +117,20 @@ const fzLocal = {
                     // so every presentValue report is treated as a new event -
                     // no debouncing/deduping is applied here.
                     result.action = action;
-
-                    if (action.endsWith('_hold_stop')) {
-                        const duration = pendingHoldDurations.get(ieeeAddr);
-                        if (duration !== undefined) {
-                            lastHoldDurations.set(ieeeAddr, duration);
-                            pendingHoldDurations.delete(ieeeAddr);
-                        }
-                    }
-
-                    // Re-assert the last known hold duration on EVERY action so
-                    // it persists in Z2M state instead of resetting to null.
-                    const lastDuration = lastHoldDurations.get(ieeeAddr);
-                    if (lastDuration !== undefined) {
-                        result.action_duration = lastDuration;
-                    }
                 } else {
                     meta.logger && meta.logger.warn &&
                         meta.logger.warn(`ts0041-enhanced: unknown presentValue action code '${msg.data.presentValue}'`);
+                }
+            }
+
+            // Re-assert the last known hold duration on EVERY report that
+            // produced something (an action, or a standalone 0xF001 update), so
+            // action_duration is (re)published and persists instead of going
+            // null - regardless of the order the two reports arrive in.
+            if (result.action !== undefined || holdDuration !== undefined) {
+                const lastDuration = lastHoldDurations.get(ieeeAddr);
+                if (lastDuration !== undefined) {
+                    result.action_duration = lastDuration;
                 }
             }
 

@@ -324,17 +324,24 @@ static void act_ct_step(s32 mireds)
 static void publish_action_raw(u16 code, u8 is_hold_stop, u32 dur)
 {
     epInfo_t dst; bind_dst(&dst);
+
+    /* Report the gesture code first... */
+    g_msPresentValue = code;
+    zcl_sendReportCmd(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR,
+                      ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
+                      ZCL_MULTISTATE_INPUT_ATTRID_PRESENT_VALUE,
+                      ZCL_DATA_TYPE_UINT16, (u8 *)&g_msPresentValue);
+
+    /* ...then the hold duration (0xF001), so it is the LAST thing published for
+     * a hold. Z2M treats `action` as momentary and clears it after publishing;
+     * emitting the duration last (and re-asserting it converter-side) keeps
+     * action_duration from being cleared back to null. */
     if (is_hold_stop) {
         g_holdDuration = dur;
         zcl_report(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR, ZCL_SEQ_NUM,
                    APP_MANUFACTURER_CODE, ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
                    ATTR_HOLD_DURATION, ZCL_DATA_TYPE_UINT32, (u8 *)&g_holdDuration);
     }
-    g_msPresentValue = code;
-    zcl_sendReportCmd(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR,
-                      ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
-                      ZCL_MULTISTATE_INPUT_ATTRID_PRESENT_VALUE,
-                      ZCL_DATA_TYPE_UINT16, (u8 *)&g_msPresentValue);
 }
 
 /* Publish, or queue for later if offline (F5/F8). Duration is only carried

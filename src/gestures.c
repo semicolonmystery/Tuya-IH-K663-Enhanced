@@ -1,5 +1,5 @@
 /********************************************************************************
- * gestures.c — single-button click/hold state machine (F2/F4/F10/F11).
+ * gestures.c — single-button click/hold state machine (F2/F4/F10).
  *
  * Rules (all thresholds from app_config.h):
  *   - A press released before HOLD_MS is a click; clicks within
@@ -22,7 +22,7 @@ typedef enum {
     ST_HOLD,        /* hold recognized (count 1..3), Move active  */
     ST_RESET_HOLD,  /* N clicks + next press held, waiting for reset */
     ST_GAP,         /* button up, waiting for the next click      */
-    ST_SWALLOW,     /* swallow the release after stuck/reset/ota  */
+    ST_SWALLOW,     /* swallow the release after reset/undefined  */
 } state_t;
 
 static gesture_report_fn s_cb;
@@ -164,7 +164,16 @@ void gestures_update(u8 pressed, u32 dt)
         break;
 
     case ST_SWALLOW:
+        /* Keep counting the press: ST_SWALLOW is reached after a reset or an
+         * undefined multi-click hold, and without a stuck timeout here a button
+         * that wedges in this state would keep gestures_busy() true forever and
+         * block deep sleep (F4). s_press_ms is not cleared on entry, so this
+         * fires STUCK_BUTTON_MS after the press began. */
+        s_press_ms += dt;
         if (release_edge) {
+            reset_seq();
+        } else if (s_press_ms >= STUCK_BUTTON_MS) {
+            emit(G_STUCK, s_press_ms);
             reset_seq();
         }
         break;

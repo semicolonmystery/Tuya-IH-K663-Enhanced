@@ -42,12 +42,15 @@
 #define DEBUG_UART_ENABLED        1        /* (1) bring-up; set 0 for release   */
 #endif
 
-/* ---- Temporary bring-up diagnostics (remove before release) --------------- */
+/* ---- Bring-up diagnostics (0 = off; compiled out entirely) ---------------- */
 /* DIAG_VERBOSE: 1s heartbeat dumping the sleep-gate booleans + raw button, plus
  * button-press / sleep-transition traces. Lets the UART pinpoint whether the
- * device is looping, deep-sleeping, or hung, and whether presses are seen. */
+ * device is looping, deep-sleeping, or hung, and whether presses are seen.
+ * Off now that the sleep/wake path is verified — note that leaving it on also
+ * pins a 1s wake timer, which prevents sleeping for the full poll interval.
+ * Set to 1 to bring it back if the sleep path ever needs re-diagnosing. */
 #ifndef DIAG_VERBOSE
-#define DIAG_VERBOSE              1
+#define DIAG_VERBOSE              0
 #endif
 /* DIAG_DISABLE_SLEEP: 1 compiles out drv_pm_lowPowerEnter() so the idle task
  * never deep-sleeps — used to bisect whether the sleep policy is the culprit.
