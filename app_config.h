@@ -102,6 +102,17 @@
 #define ACTION_CACHE_MAX          10       /* (10) queued published actions cap */
 
 /* ============================================================================
+ * F8 — Gesture publishing (Multistate Input reports)
+ * The hold-stop path can fire several APS messages back-to-back (Level/Colour
+ * Stop to a bound light, then the gesture report). The stack's ev_buf pool only
+ * has 2 large buffers, so an immediate third send fails with
+ * ZCL_STA_INSUFFICIENT_SPACE and is silently lost. The hold duration is
+ * therefore reported on a short timer, retried while the pool is still busy.
+ * ========================================================================== */
+#define HOLD_DURATION_REPORT_DELAY_MS   300  /* defer duration report by this   */
+#define HOLD_DURATION_REPORT_RETRIES    5    /* re-tries while buffers are busy */
+
+/* ============================================================================
  * F6 — LED effect timing (ms)
  * ========================================================================== */
 #define LED_RAMP_LEVEL_MS         400      /* (400) single-hold ramp period     */

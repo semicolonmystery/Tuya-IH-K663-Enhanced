@@ -32,7 +32,7 @@ enum {
     ACT_TRIPLE_HOLD_START, ACT_TRIPLE_HOLD_STOP,
 };
 /* Manufacturer-specific attr on Multistate Input carrying the last hold
- * duration (ms); reported immediately before a *_hold_stop (F8). */
+ * duration (ms); reported shortly after the matching *_hold_stop (F8). */
 #define ATTR_HOLD_DURATION      0xF001
 
 static void action_cache_flush(void);   /* defined with the cluster senders */
@@ -321,26 +321,70 @@ static void act_ct_step(s32 mireds)
 /* ---------------------------------------------------------------------------
  * Publish the gesture to the coordinator via Multistate Input (F8).
  * ------------------------------------------------------------------------- */
+/* Deferred hold-duration (0xF001) report.
+ *
+ * A hold-stop with the remote bound to a light fires three APS messages
+ * back-to-back: Level/Colour Stop to the light, then the presentValue report,
+ * then the duration. Each holds an ev_buf until its APS ack, and the stack's
+ * large-buffer group only has 2 entries (BUFFER_NUM_IN_GROUP3), so the third
+ * send returns ZCL_STA_INSUFFICIENT_SPACE and the duration is silently dropped
+ * — which is exactly why action_duration worked unbound but not once bound to a
+ * light. Sending it on a short timer keeps at most two sends in flight, and we
+ * retry while the pool is still busy instead of ignoring the status. */
+static u32 s_pendingDur;
+static u8  s_durRetries;
+static ev_timer_event_t *s_durTimer;
+
+static int hold_duration_report_cb(void *arg)
+{
+    epInfo_t dst; bind_dst(&dst);
+    g_holdDuration = s_pendingDur;
+
+    u8 st = zcl_report(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR,
+                       ZCL_SEQ_NUM, APP_MANUFACTURER_CODE,
+                       ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
+                       ATTR_HOLD_DURATION, ZCL_DATA_TYPE_UINT32,
+                       (u8 *)&g_holdDuration);
+
+    if (st != ZCL_STA_SUCCESS && s_durRetries < HOLD_DURATION_REPORT_RETRIES) {
+        s_durRetries++;
+        DBG("dur=busy st=%d try=%d\n", (int)st, (int)s_durRetries);
+        return 0;                       /* buffers still busy — retry */
+    }
+    if (st != ZCL_STA_SUCCESS) {
+        DBG("dur=lost st=%d\n", (int)st);
+    }
+    s_durTimer = NULL;
+    return -1;                          /* done */
+}
+
+static void publish_hold_duration(u32 dur)
+{
+    s_pendingDur = dur;
+    s_durRetries = 0;
+    if (!s_durTimer) {
+        s_durTimer = TL_ZB_TIMER_SCHEDULE(hold_duration_report_cb, NULL,
+                                          HOLD_DURATION_REPORT_DELAY_MS);
+    }
+}
+
 static void publish_action_raw(u16 code, u8 is_hold_stop, u32 dur)
 {
     epInfo_t dst; bind_dst(&dst);
 
-    /* Report the gesture code first... */
+    /* Report the gesture code now... */
     g_msPresentValue = code;
     zcl_sendReportCmd(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR,
                       ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
                       ZCL_MULTISTATE_INPUT_ATTRID_PRESENT_VALUE,
                       ZCL_DATA_TYPE_UINT16, (u8 *)&g_msPresentValue);
 
-    /* ...then the hold duration (0xF001), so it is the LAST thing published for
-     * a hold. Z2M treats `action` as momentary and clears it after publishing;
-     * emitting the duration last (and re-asserting it converter-side) keeps
-     * action_duration from being cleared back to null. */
+    /* ...and the hold duration shortly after, so it never contends with the
+     * light command + gesture report for the last free buffer. It also stays
+     * the last thing published for a hold, which keeps Z2M's momentary-`action`
+     * reset from clearing action_duration. */
     if (is_hold_stop) {
-        g_holdDuration = dur;
-        zcl_report(APP_ENDPOINT, &dst, TRUE, ZCL_FRAME_SERVER_CLIENT_DIR, ZCL_SEQ_NUM,
-                   APP_MANUFACTURER_CODE, ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
-                   ATTR_HOLD_DURATION, ZCL_DATA_TYPE_UINT32, (u8 *)&g_holdDuration);
+        publish_hold_duration(dur);
     }
 }
 

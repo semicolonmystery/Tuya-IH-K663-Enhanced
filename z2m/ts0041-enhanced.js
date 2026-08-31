@@ -15,9 +15,11 @@
  *  - Cluster genMultistateInput (0x0012), manufacturer-specific attribute 0xF001
  *    (61441 decimal, uint32, manufacturer code 0x1141 / Telink): carries the
  *    duration (ms) of the hold gesture that just ended. The firmware reports it
- *    just AFTER the matching *_hold_stop presentValue report (so it is the last
- *    thing published for a hold, and Z2M's momentary-`action` reset cannot clear
- *    it). We do NOT rely on that ordering though: the value is remembered
+ *    on a short timer (~300 ms) AFTER the matching *_hold_stop presentValue
+ *    report - both so it is the last thing published for a hold (Z2M's
+ *    momentary-`action` reset cannot clear it) and so it does not contend with
+ *    the bound light's Level/Colour Stop command for the stack's last free
+ *    buffer. We do NOT rely on that ordering though: the value is remembered
  *    per-device the moment it is seen and re-asserted as `action_duration` on
  *    every subsequent report, so it persists instead of flashing to null.
  *  - Cluster genPowerCfg (0x0001):
