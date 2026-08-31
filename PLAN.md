@@ -143,12 +143,13 @@ implicit "test 0".
   verified; GPIO/serial behaviour must be confirmed on the Pi. Assumes libgpiod
   v2 (Bookworm).
 
-- [~] **M14 — Docs & acceptance.** README now covers toolchain, build,
-  flashing/wiring, the full gesture table, pairing/reset, Z2M converter install +
-  binding, and OTA setup (index override URL, re-interview caveat). Still open:
-  flash-map section, `app_config.h` tuning guide (reconnect-speed vs battery),
-  and the acceptance test scripts (section 8) — plus a measured coin-cell
-  battery-life figure, which needs a long run on hardware.
+- [x] **M14 — Docs & acceptance.** README covers toolchain, build, flashing/wiring,
+  the full gesture table, pairing/reset, Z2M converter install + binding, OTA
+  setup (index override URL + re-interview caveat), the flash map (208 KB app
+  budget, OTA slot at 0x40000, NV at 0x34000 — so an OTA keeps pairing), an
+  `app_config.h` tuning guide (reconnect-speed vs battery), and a numbered
+  acceptance checklist. Outstanding: a *measured* coin-cell battery-life figure,
+  which needs a long unattended hardware run.
 
 ## Findings that shape later milestones
 - **F8 wire format:** the SDK (v3.7.2.0) ships **Multistate Input** but **no

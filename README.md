@@ -113,3 +113,86 @@ after `OTA_SESSION_MAX_S` (10 min) so it cannot drain the battery.
 Each release also ships a `.bin` (for SWS flashing via `./flash.sh`) and a
 `.ota` (for Z2M), and the OTA file version increases every release, so Z2M
 reliably sees newer builds.
+
+## Flash map
+
+TLSR8258 with 512 KB flash, SDK **Normal Mode** (`BOOT_LOADER_MODE 0`):
+
+| Range | Size | Contents |
+|---|---|---|
+| `0x00000`–`0x34000` | 208 KB | **Running app image** (`FLASH_ADDR_OF_APP_FW`) |
+| `0x34000`–`0x40000` | 48 KB | NV storage (`NV_BASE_ADDRESS`) — network keys, bindings |
+| `0x40000`–`0x74000` | 208 KB | **OTA download slot** (`FLASH_ADDR_OF_OTA_IMAGE`, fixed) |
+| `0x7A000` | — | Secondary NV area (`NV_BASE_ADDRESS2`) |
+
+The app budget is therefore **208 KB**. The current build uses ~132 KB (~63%),
+so there is comfortable headroom. An OTA is downloaded into the `0x40000` slot
+and only becomes the boot image once fully written and validated, so a failed or
+interrupted update leaves the running firmware untouched — the device simply
+keeps running the old image.
+
+Because the network keys and bindings live in NV (`0x34000`), an OTA update
+**keeps the device paired**; only a factory reset (4 clicks + 5 s hold) clears
+them.
+
+## Tuning (`app_config.h`)
+
+Every tunable lives in `app_config.h`. The two that actually matter for the
+reconnect-speed vs battery-life tradeoff:
+
+| Define | Default | Effect |
+|---|---|---|
+| `CFG_POLL_RATE_NORMAL_MS` | `7000` | How often the device wakes to check in with its parent. **The dominant battery knob.** Lower = snappier OTA/commands from the coordinator and shorter worst-case latency, but proportionally more wakeups. Raising it saves power at the cost of responsiveness. |
+| `CFG_ZDO_MAX_REJOIN_BACKOFF_TIME` | `3600` | Ceiling on rejoin backoff when the network is gone. Lower = reconnects sooner after an outage; higher = a permanently-unreachable network can't flatten the cell by retrying. |
+
+Others worth knowing:
+
+- `CFG_ZDO_REJOIN_BACKOFF_TIME` (30 s initial backoff), `CFG_ZDO_REJOIN_TIMES`,
+  `CFG_ZDO_REJOIN_DURATION` — shape of the retry burst before backoff grows.
+- `BATTERY_MEASURE_MIN_INTERVAL_S` (1 h) / `BATTERY_REPORT_INTERVAL_S` (6 h).
+- `HOLD_MS` (400), `MULTI_CLICK_WINDOW_MS` (300), `DEBOUNCE_MS` (20) — gesture
+  feel. Raising `MULTI_CLICK_WINDOW_MS` makes multi-clicks easier to land but
+  adds that much latency before a single click is emitted.
+- `STUCK_BUTTON_MS` (20 s) — when a held button is treated as wedged, abandoned
+  and allowed to sleep.
+- `TX_POWER_IDX` — **do not raise.** A coin cell cannot sustain high TX power.
+- `DEBUG_UART_ENABLED` — set to `0` for a release build. Removes all logging
+  code and its flash/power cost.
+
+Note that a device wakes on **every** button press regardless of poll rate, so
+raising `CFG_POLL_RATE_NORMAL_MS` does not make the remote feel slower to use —
+it only delays messages the coordinator wants to push *to* the device.
+
+## Acceptance checklist
+
+Run against a flashed device joined to Z2M, watching `./debug.sh`.
+
+1. **Boot** — banner prints model + firmware version; LED blinks 3×; `batt=` line
+   shows a sane voltage and percentage.
+2. **Pairing/reset (F10)** — 4 clicks then hold the 5th press 5 s → `gesture=reset`,
+   LED fast-blinks, `net=pairing` → `net=joined`.
+3. **Gestures (F2/F8)** — each row of the gesture table produces the expected
+   `gesture=` line and the matching Z2M `action`.
+4. **Hold duration** — every `*_hold_stop` reports a plausible `dur=`, and Z2M's
+   `action_duration` updates and then *persists* (does not fall back to null).
+5. **Bound light (F3)** — bind to a light: 1 click toggles; hold dims and the
+   direction alternates between holds; 2 clicks + hold shifts colour temperature.
+   Verify `action_duration` still updates while bound (this needs the deferred
+   duration report — see `HOLD_DURATION_REPORT_DELAY_MS`).
+6. **Sleep (F4)** — when idle the UART emits one wake transient per poll interval
+   (~7 s by default). Confirm the cadence tracks `CFG_POLL_RATE_NORMAL_MS`.
+7. **Stuck button (F4)** — hold for 20 s → `gesture=stuck`, LED off, device
+   returns to sleeping instead of staying awake.
+8. **Rejoin (F9)** — power the coordinator down and back up; the device rejoins
+   without re-pairing. A press while offline logs `rejoin=button`.
+9. **Offline cache (F5)** — with the coordinator down, perform several gestures;
+   on reconnect `cache=flush` appears and the actions arrive as a few messages,
+   not a verbatim replay.
+10. **Battery (F7)** — Z2M shows battery % and voltage.
+11. **OTA (F11)** — with a newer release published, Z2M offers an update; press
+    the button to wake the device; expect `ota=start` → `ota=image_done` →
+    `ota=complete st=0`, then a reboot banner showing the **new** version. A full
+    image takes roughly 12 minutes.
+
+> Not yet measured: real coin-cell battery life. That needs a long unattended run
+> on hardware.

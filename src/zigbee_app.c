@@ -559,9 +559,11 @@ static int diag_hb_cb(void *arg)
  * There is no on-device OTA gesture: Z2M queues the image and the device picks
  * it up on its next poll (a button press wakes it, so an update starts promptly
  * after any press). During a download we poll fast and stay awake — deep sleep
- * between 250 ms block requests would make the transfer crawl — and a session
- * cap makes sure a stalled download can never pin the radio awake and flatten
- * the cell.
+ * between block requests makes the transfer crawl — and a stall watchdog makes
+ * sure a *stuck* download can never pin the radio awake and flatten the cell.
+ * The watchdog tracks the actual download offset rather than wall-clock time: a
+ * fixed cap aborted healthy transfers, since a full image legitimately takes
+ * ~12 minutes at the OTA poll rate.
  * ------------------------------------------------------------------------- */
 #if ZCL_OTA_SUPPORT
 static ota_preamble_t g_otaInfo = {
@@ -571,7 +573,9 @@ static ota_preamble_t g_otaInfo = {
 };
 
 static u8 s_otaActive;                       /* download in progress          */
-static ev_timer_event_t *s_otaCapTimer;      /* OTA_SESSION_MAX_S watchdog    */
+static ev_timer_event_t *s_otaProgTimer;     /* stall watchdog                */
+static u32 s_otaLastOffset;                  /* last observed download offset */
+static u8  s_otaStallChecks;                 /* consecutive checks w/o advance*/
 #define OTA_BUSY()   (s_otaActive != 0)
 
 static void ota_session_end(void)
@@ -579,18 +583,31 @@ static void ota_session_end(void)
     s_otaActive = 0;
     zb_setPollRate(POLL_RATE);
     led_stop();
-    if (s_otaCapTimer) {
-        TL_ZB_TIMER_CANCEL(&s_otaCapTimer);
+    if (s_otaProgTimer) {
+        TL_ZB_TIMER_CANCEL(&s_otaProgTimer);
     }
 }
 
-static int ota_session_cap_cb(void *arg)
+/* Watchdog: abort only if the download offset stops advancing. zcl_attr_fileOffset
+ * is maintained by the SDK's OTA client as blocks land. */
+static int ota_progress_cb(void *arg)
 {
-    /* Stalled download: give up so the device can sleep again. Z2M can retry. */
-    DBG("ota=timeout\n");
-    s_otaCapTimer = NULL;        /* about to expire — don't cancel it below   */
-    ota_session_end();
-    return -1;
+    if (!s_otaActive) {
+        s_otaProgTimer = NULL;
+        return -1;
+    }
+    if (zcl_attr_fileOffset != s_otaLastOffset) {
+        s_otaLastOffset = zcl_attr_fileOffset;   /* progressing — keep going */
+        s_otaStallChecks = 0;
+        return 0;
+    }
+    if (++s_otaStallChecks >= OTA_STALL_CHECKS) {
+        DBG("ota=stalled off=%d\n", (int)s_otaLastOffset);
+        s_otaProgTimer = NULL;       /* expiring — don't cancel it below */
+        ota_session_end();
+        return -1;
+    }
+    return 0;
 }
 
 static void app_otaProcessMsgHandler(u8 evt, u8 status)
@@ -602,9 +619,11 @@ static void app_otaProcessMsgHandler(u8 evt, u8 status)
             s_otaActive = 1;
             zb_setPollRate(QUEUE_POLL_RATE);      /* pull blocks quickly      */
             led_pulse(LED_OTA_PULSE_MS);          /* slow pulse while loading */
-            if (!s_otaCapTimer) {
-                s_otaCapTimer = TL_ZB_TIMER_SCHEDULE(ota_session_cap_cb, NULL,
-                                                     OTA_SESSION_MAX_S * 1000);
+            s_otaLastOffset  = zcl_attr_fileOffset;
+            s_otaStallChecks = 0;
+            if (!s_otaProgTimer) {
+                s_otaProgTimer = TL_ZB_TIMER_SCHEDULE(ota_progress_cb, NULL,
+                                                      OTA_PROGRESS_CHECK_S * 1000);
             }
         }
         break;

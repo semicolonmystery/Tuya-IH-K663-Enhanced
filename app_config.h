@@ -175,7 +175,13 @@
  * pulls the image when it next polls (a button press wakes it); there is NO
  * on-device OTA trigger gesture.
  * ========================================================================== */
-#define OTA_SESSION_MAX_S                600   /* (600) session cap               */
+/* Stall watchdog. A fixed wall-clock session cap was wrong: ~131 KB at the OTA
+ * poll rate takes ~12 min, so a 600 s cap aborted perfectly healthy transfers
+ * (observed on hardware). Instead we watch the download offset and only give up
+ * when it stops advancing — slow-but-working transfers run to completion, while
+ * a genuinely stuck session still stops pinning the radio awake. */
+#define OTA_PROGRESS_CHECK_S             60    /* progress poll interval          */
+#define OTA_STALL_CHECKS                 3     /* give up after N with no advance */
 #define OTA_AUTO_QUERY_ENABLED           0     /* (0) Z2M-initiated only          */
 #define OTA_QUERY_MIN_INTERVAL_S         604800/* (604800) opportunistic query gap */
 
