@@ -710,7 +710,11 @@ void user_init(bool isRetention)
 {
     if (!isRetention) {
         led_boot_blink();
-        DBG("\n== IH-K663 boot model=%s ==\n", APP_MODEL_ID);
+        /* Print the build identity so an OTA can be confirmed end-to-end: after a
+         * successful update the banner shows the NEW version. build= is the
+         * APP_BUILD byte of the OTA fileVersion (0x10<build>3001). */
+        DBG("\n== IH-K663 boot model=%s fw=%s build=%d ==\n",
+            APP_MODEL_ID, VERSION_STR, (int)APP_BUILD);
     }
 
     /* Hardware that MUST be restored on every boot AND every deep-retention wake
