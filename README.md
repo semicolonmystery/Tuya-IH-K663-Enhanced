@@ -142,7 +142,7 @@ reconnect-speed vs battery-life tradeoff:
 
 | Define | Default | Effect |
 |---|---|---|
-| `CFG_POLL_RATE_NORMAL_MS` | `7000` | How often the device wakes to check in with its parent. **The dominant battery knob.** Lower = snappier OTA/commands from the coordinator and shorter worst-case latency, but proportionally more wakeups. Raising it saves power at the cost of responsiveness. |
+| `POLL_CTRL_LONG_POLL_S` | `60` | How often the device wakes to poll its parent. **The dominant battery knob** — `CFG_POLL_RATE_NORMAL_MS` is derived from it so the two can't disagree. Lower = shorter worst-case latency for anything the coordinator pushes; higher = fewer wakeups. |
 | `CFG_ZDO_MAX_REJOIN_BACKOFF_TIME` | `3600` | Ceiling on rejoin backoff when the network is gone. Lower = reconnects sooner after an outage; higher = a permanently-unreachable network can't flatten the cell by retrying. |
 
 Others worth knowing:
@@ -160,8 +160,48 @@ Others worth knowing:
   code and its flash/power cost.
 
 Note that a device wakes on **every** button press regardless of poll rate, so
-raising `CFG_POLL_RATE_NORMAL_MS` does not make the remote feel slower to use —
-it only delays messages the coordinator wants to push *to* the device.
+a slow poll does not make the remote feel slower to use — it only delays
+messages the coordinator wants to push *to* the device.
+
+### Battery life and the Poll Control cluster
+
+A remote is *transmit*-driven: it sends when you press a button and otherwise
+only polls to keep the parent link alive and collect anything queued for it. So
+the idle poll dominates the energy budget, and it is set slow (60 s). Going
+much slower buys little — past roughly a minute the deep-sleep current dominates
+and you are trading responsiveness for almost nothing.
+
+Because a slow-polling device is hard for a coordinator to reach (a parent only
+buffers a message for it for a few seconds), the firmware implements the
+standard **Poll Control cluster (0x0020)**, the same mechanism commercial
+battery remotes use:
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `checkinInterval` | 1 h | How often the device announces itself to the coordinator |
+| `longPollInterval` | 60 s | Idle poll rate |
+| `shortPollInterval` | 250 ms | Poll rate during a fast-poll window |
+| `fastPollTimeout` | 10 s | Default length of a fast-poll window |
+
+On each check-in the coordinator may answer *"start fast polling"*, which opens a
+short window where it can actually talk to the device (attribute reads, config,
+starting an OTA). Z2M can also change these at runtime, and `genPollCtrl` is
+bound during `configure` so check-ins reach the coordinator.
+
+Two safety properties are enforced in firmware, both deliberately:
+
+- A fast-poll window is **always** time-bounded and clamped to
+  `POLL_CTRL_FAST_POLL_TIMEOUT_MAX_S` (60 s), so a buggy or hostile coordinator
+  cannot leave the radio running and flatten the cell.
+- An in-progress OTA **owns** the poll rate; a fast-poll window expiring
+  mid-download can't drop the device back to the slow poll and stall it.
+
+A slow poll is safe against parent child-aging: the Zigbee end-device timeout
+default is 256 minutes, far longer than any poll interval here.
+
+> Practical consequence, and it matches how commercial battery remotes behave:
+> **press the button** to wake the device when you want Z2M to talk to it —
+> pairing, `Reconfigure`, or starting an OTA.
 
 ## Acceptance checklist
 
@@ -180,7 +220,10 @@ Run against a flashed device joined to Z2M, watching `./debug.sh`.
    Verify `action_duration` still updates while bound (this needs the deferred
    duration report — see `HOLD_DURATION_REPORT_DELAY_MS`).
 6. **Sleep (F4)** — when idle the UART emits one wake transient per poll interval
-   (~7 s by default). Confirm the cadence tracks `CFG_POLL_RATE_NORMAL_MS`.
+   (~60 s by default). Confirm the cadence tracks `POLL_CTRL_LONG_POLL_S`.
+6b. **Poll Control (F4b)** — `poll=checkin` appears at the check-in interval. If
+   the coordinator opens a fast-poll window you should see `poll=fast` followed
+   by `poll=long` when it expires (never `poll=fast` left standing).
 7. **Stuck button (F4)** — hold for 20 s → `gesture=stuck`, LED off, device
    returns to sleeping instead of staying awake.
 8. **Rejoin (F9)** — power the coordinator down and back up; the device rejoins

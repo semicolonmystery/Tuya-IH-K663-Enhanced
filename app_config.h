@@ -133,6 +133,31 @@
 #define BATTERY_REPORT_INTERVAL_S       21600 /* (21600) periodic report        */
 
 /* ============================================================================
+ * F4b — Poll Control cluster (0x0020) — battery life.
+ *
+ * A sleepy remote is transmit-driven: it only needs to poll its parent to keep
+ * the link alive and to collect anything the coordinator wants to push. So the
+ * long poll can be far slower than the 7 s originally used here — that alone is
+ * the bulk of the battery win, since deep-sleep current dominates past ~60 s and
+ * slowing further buys little while hurting responsiveness.
+ *
+ * Poll Control is the standard mechanism that makes a long poll safe: the device
+ * checks in periodically, and the coordinator may answer "start fast polling" to
+ * grab a window in which it can talk to the device (OTA, config, attribute
+ * reads). Fast poll is ALWAYS time-bounded so a coordinator cannot leave the
+ * radio running and flatten the cell.
+ *
+ * Note the ZCL attributes are in QUARTER-SECONDS; these are seconds/ms and are
+ * converted at the attribute table. A long poll is safe against parent child
+ * aging: the Zigbee end-device timeout default is 256 minutes.
+ * ========================================================================== */
+#define POLL_CTRL_LONG_POLL_S             60   /* idle poll — main battery knob  */
+#define POLL_CTRL_CHECKIN_INTERVAL_S      3600 /* (1 h) check-in to coordinator  */
+#define POLL_CTRL_SHORT_POLL_MS           250  /* fast-poll rate when told to    */
+#define POLL_CTRL_FAST_POLL_TIMEOUT_S     10   /* default fast-poll window       */
+#define POLL_CTRL_FAST_POLL_TIMEOUT_MAX_S 60   /* hard cap on any fast-poll ask  */
+
+/* ============================================================================
  * F9 — Network: join / rejoin / reparent (highest-risk area).
  * These feed configs/zb_config.h. Start from romasku's proven values, then
  * raise the MAX backoff and normal poll for a battery ZED so an unreachable
@@ -147,8 +172,12 @@
 #define CFG_ZDO_MAX_PARENT_THRESHOLD_RETRY 5   /* parent-loss retry threshold    */
 
 /* Poll rates (ms). Long normal poll for a battery ZED; the stack uses the
- * faster rates only during active exchanges. */
-#define CFG_POLL_RATE_NORMAL_MS           7000 /* normal indirect poll           */
+ * faster rates only during active exchanges.
+ *
+ * The normal poll rate is THE dominant battery cost: the device wakes, powers
+ * the radio and does a data request every interval. It is derived from the Poll
+ * Control long-poll interval below so the two can never disagree. */
+#define CFG_POLL_RATE_NORMAL_MS   (POLL_CTRL_LONG_POLL_S * 1000)
 #define CFG_POLL_RATE_RESPONSE_MS         250  /* when coordinator has data       */
 #define CFG_POLL_RATE_QUEUE_MS            250  /* when outbound queued            */
 #define CFG_POLL_RATE_REJOIN_MS           500  /* during rejoin                   */

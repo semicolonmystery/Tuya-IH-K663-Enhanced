@@ -212,7 +212,11 @@ module.exports = {
         // within Z2M (bind this remote's endpoint to their target lights or
         // groups via the frontend/"Bind" tab) - this converter deliberately
         // stays out of that so it doesn't fight with user-managed bindings.
-        await reporting.bind(endpoint, coordinatorEndpoint, ['genPowerCfg', 'genMultistateInput']);
+        // genPollCtrl is bound so the device's periodic Check-In actually reaches
+        // the coordinator: the firmware addresses check-ins via the binding
+        // table, so without this bind they go nowhere and Z2M loses its chance
+        // to grab a fast-poll window on a slow-polling battery device.
+        await reporting.bind(endpoint, coordinatorEndpoint, ['genPowerCfg', 'genMultistateInput', 'genPollCtrl']);
 
         await reporting.batteryPercentageRemaining(endpoint, {min: 3600, max: 21600, change: 0});
         await reporting.batteryVoltage(endpoint, {min: 3600, max: 21600, change: 0});

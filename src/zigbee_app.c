@@ -23,9 +23,9 @@
 #include "led_effects.h"
 #include "battery.h"
 #include "action_cache.h"
+#include "poll_control.h"
 #include "debug.h"
 
-#define APP_ENDPOINT    1
 
 /* F8 action codes carried in Multistate Input presentValue (0x0055). */
 enum {
@@ -54,6 +54,9 @@ static const u16 app_inClusterList[] = {
     ZCL_CLUSTER_GEN_IDENTIFY,
     ZCL_CLUSTER_GEN_POWER_CFG,
     ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,
+#if ZCL_POLL_CTRL_SUPPORT
+    ZCL_CLUSTER_GEN_POLL_CONTROL,
+#endif
 };
 
 static const u16 app_outClusterList[] = {
@@ -132,11 +135,42 @@ static const zclAttrInfo_t multistate_attrTbl[] = {
 };
 #define MULTISTATE_ATTR_NUM   (sizeof(multistate_attrTbl) / sizeof(zclAttrInfo_t))
 
+/* ---- Poll Control (F4b) — see poll_control.c for the behaviour ----
+ * ZCL intervals are in quarter-seconds; app_config.h holds seconds/ms. */
+#if ZCL_POLL_CTRL_SUPPORT
+app_pollCtrlAttr_t g_pollCtrlAttrs = {
+    .chkInInterval       = POLL_CTRL_CHECKIN_INTERVAL_S * 4,
+    .longPollInterval    = POLL_CTRL_LONG_POLL_S * 4,
+    .chkInIntervalMin    = 4,                            /* never faster than 1 s */
+    .longPollIntervalMin = 4,
+    .shortPollInterval   = POLL_CTRL_SHORT_POLL_MS / 250,
+    .fastPollTimeout     = POLL_CTRL_FAST_POLL_TIMEOUT_S * 4,
+    /* Hard cap on any fast-poll window the coordinator asks for. The SDK sample
+     * leaves this 0, which both rejects every explicit request and removes the
+     * safety bound — neither is what we want on a coin cell. */
+    .fastPollTimeoutMax  = POLL_CTRL_FAST_POLL_TIMEOUT_MAX_S * 4,
+};
+static const zclAttrInfo_t pollCtrl_attrTbl[] = {
+    { ZCL_ATTRID_CHK_IN_INTERVAL,         ZCL_DATA_TYPE_UINT32, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (u8 *)&g_pollCtrlAttrs.chkInInterval },
+    { ZCL_ATTRID_LONG_POLL_INTERVAL,      ZCL_DATA_TYPE_UINT32, ACCESS_CONTROL_READ,                        (u8 *)&g_pollCtrlAttrs.longPollInterval },
+    { ZCL_ATTRID_SHORT_POLL_INTERVAL,     ZCL_DATA_TYPE_UINT16, ACCESS_CONTROL_READ,                        (u8 *)&g_pollCtrlAttrs.shortPollInterval },
+    { ZCL_ATTRID_FAST_POLL_TIMEOUT,       ZCL_DATA_TYPE_UINT16, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (u8 *)&g_pollCtrlAttrs.fastPollTimeout },
+    { ZCL_ATTRID_CHK_IN_INTERVAL_MIN,     ZCL_DATA_TYPE_UINT32, ACCESS_CONTROL_READ,                        (u8 *)&g_pollCtrlAttrs.chkInIntervalMin },
+    { ZCL_ATTRID_LONG_POLL_INTERVAL_MIN,  ZCL_DATA_TYPE_UINT32, ACCESS_CONTROL_READ,                        (u8 *)&g_pollCtrlAttrs.longPollIntervalMin },
+    { ZCL_ATTRID_FAST_POLL_TIMEOUT_MAX,   ZCL_DATA_TYPE_UINT16, ACCESS_CONTROL_READ,                        (u8 *)&g_pollCtrlAttrs.fastPollTimeoutMax },
+    { ZCL_ATTRID_GLOBAL_CLUSTER_REVISION, ZCL_DATA_TYPE_UINT16, ACCESS_CONTROL_READ,                        (u8 *)&zcl_attr_global_clusterRevision },
+};
+#define POLLCTRL_ATTR_NUM   (sizeof(pollCtrl_attrTbl) / sizeof(zclAttrInfo_t))
+#endif
+
 static const zcl_specClusterInfo_t g_appClusterList[] = {
     { ZCL_CLUSTER_GEN_BASIC,                 MANUFACTURER_CODE_NONE, BASIC_ATTR_NUM,      basic_attrTbl,      zcl_basic_register,           NULL },
     { ZCL_CLUSTER_GEN_IDENTIFY,              MANUFACTURER_CODE_NONE, IDENTIFY_ATTR_NUM,   identify_attrTbl,   zcl_identify_register,        NULL },
     { ZCL_CLUSTER_GEN_POWER_CFG,             MANUFACTURER_CODE_NONE, POWERCFG_ATTR_NUM,   powerCfg_attrTbl,   zcl_powerCfg_register,        NULL },
     { ZCL_CLUSTER_GEN_MULTISTATE_INPUT_BASIC,MANUFACTURER_CODE_NONE, MULTISTATE_ATTR_NUM, multistate_attrTbl, zcl_multistate_input_register,NULL },
+#if ZCL_POLL_CTRL_SUPPORT
+    { ZCL_CLUSTER_GEN_POLL_CONTROL,          MANUFACTURER_CODE_NONE, POLLCTRL_ATTR_NUM,   pollCtrl_attrTbl,   zcl_pollCtrl_register,        pollctrl_cb },
+#endif
 };
 #define APP_CLUSTER_NUM   (sizeof(g_appClusterList) / sizeof(g_appClusterList[0]))
 
@@ -179,6 +213,11 @@ static int pair_timeout_cb(void *arg)
 static void start_pairing(void)
 {
     DBG("net=pairing\n");
+#if ZCL_POLL_CTRL_SUPPORT
+    /* Leaving the old network: stop checking in and close any fast-poll
+     * window, so we cannot keep fast-polling with no parent. */
+    pollctrl_stop();
+#endif
     s_pairing = 1;
     led_pair();
     bdb_networkSteerStart();
@@ -198,6 +237,11 @@ static void app_on_joined(void)
     /* Set the poll rate explicitly after (re)connect — the stack can otherwise
      * miss scheduling the poll task on a fast reconnect (per romasku). */
     zb_setPollRate(POLL_RATE);
+#endif
+#if ZCL_POLL_CTRL_SUPPORT
+    /* Begin periodic check-ins so the coordinator can still reach us despite
+     * the slow idle poll (F4b). Re-armed on every (re)join. */
+    pollctrl_start();
 #endif
     DBG("net=joined\n");
     action_cache_flush();   /* F5: send anything cached while offline */
@@ -580,8 +624,12 @@ static u8  s_otaStallChecks;                 /* consecutive checks w/o advance*/
 
 static void ota_session_end(void)
 {
-    s_otaActive = 0;
+    s_otaActive = 0;   /* clear first: poll control checks app_otaBusy() */
+#if ZCL_POLL_CTRL_SUPPORT
+    pollctrl_restore_rate();   /* back to long, or short if a window is open */
+#else
     zb_setPollRate(POLL_RATE);
+#endif
     led_stop();
     if (s_otaProgTimer) {
         TL_ZB_TIMER_CANCEL(&s_otaProgTimer);
@@ -608,6 +656,11 @@ static int ota_progress_cb(void *arg)
         return -1;
     }
     return 0;
+}
+
+bool app_otaBusy(void)
+{
+    return OTA_BUSY() ? TRUE : FALSE;
 }
 
 static void app_otaProcessMsgHandler(u8 evt, u8 status)
@@ -713,7 +766,13 @@ static void app_stack_init(void)
 
 static void app_zb_init(void)
 {
+#if ZCL_POLL_CTRL_SUPPORT
+    /* With Poll Control we check in on a schedule rather than only when the
+     * user pokes the button, which is what this power mode advertises. */
+    af_powerDescPowerModeUpdate(POWER_MODE_RECEIVER_COMES_PERIODICALLY);
+#else
     af_powerDescPowerModeUpdate(POWER_MODE_RECEIVER_COMES_WHEN_STIMULATED);
+#endif
     zcl_init(app_zclProcessIncomingMsg);
     af_endpointRegister(APP_ENDPOINT, (af_simple_descriptor_t *)&app_simpleDesc,
                         zcl_rx_handler, NULL);
