@@ -762,7 +762,13 @@ static void app_otaProcessMsgHandler(u8 evt, u8 status)
             DBG("ota=start\n");
             s_otaActive = 1;
             zb_setPollRate(QUEUE_POLL_RATE);      /* pull blocks quickly      */
-            led_pulse(LED_OTA_PULSE_MS);          /* slow pulse while loading */
+            /* Blink once to acknowledge, rather than pulsing for the whole
+             * download. led_pulse() runs a continuous PWM effect on a 20 ms
+             * tick, so over a ~12 minute transfer it burned LED current and
+             * ~36k CPU wakeups during the most power-hungry operation this
+             * device ever does — on a coin cell that adds to the supply sag
+             * exactly when the radio needs headroom. */
+            led_blink(1);
             s_otaLastOffset  = zcl_attr_fileOffset;
             s_otaStallChecks = 0;
             if (!s_otaProgTimer) {

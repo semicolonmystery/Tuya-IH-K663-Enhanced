@@ -108,10 +108,14 @@ ota:
 That URL always tracks the newest release. Then in Z2M use **OTA → Check for
 new updates** on the device and start the update.
 
+**Run one OTA at a time.** Two concurrent image downloads on the same network
+contend for the coordinator and airtime, and blocks start failing to deliver
+(`Delivery failed for ...`). A full image is ~12 minutes; queue them.
+
 Because this is a sleepy battery device it only fetches while awake, so
 **press the button** after starting the update to wake it — the transfer then
-runs at a fast poll rate (the LED pulses slowly while it downloads) and the
-device reboots into the new image when finished. A stalled transfer is abandoned
+runs at a fast poll rate (the LED blinks once to acknowledge the start) and
+the device reboots into the new image when finished. A stalled transfer is abandoned
 after `OTA_SESSION_MAX_S` (10 min) so it cannot drain the battery.
 
 > The OTA Upgrade cluster is advertised in the device's simple descriptor. A
