@@ -708,14 +708,28 @@ static ota_preamble_t g_otaInfo = {
 };
 
 static u8 s_otaActive;                       /* download in progress          */
+static ev_timer_event_t *s_otaLedTimer;      /* periodic progress flash       */
 static ev_timer_event_t *s_otaProgTimer;     /* stall watchdog                */
 static u32 s_otaLastOffset;                  /* last observed download offset */
 static u8  s_otaStallChecks;                 /* consecutive checks w/o advance*/
 #define OTA_BUSY()   (s_otaActive != 0)
 
+static int ota_led_cb(void *arg)
+{
+    if (!s_otaActive) {
+        s_otaLedTimer = NULL;
+        return -1;
+    }
+    led_blink_ms(1, OTA_LED_FLASH_MS);
+    return 0;   /* repeat */
+}
+
 static void ota_session_end(void)
 {
     s_otaActive = 0;   /* clear first: poll control checks app_otaBusy() */
+    if (s_otaLedTimer) {
+        TL_ZB_TIMER_CANCEL(&s_otaLedTimer);
+    }
 #if ZCL_POLL_CTRL_SUPPORT
     pollctrl_restore_rate();   /* back to long, or short if a window is open */
 #else
@@ -762,13 +776,16 @@ static void app_otaProcessMsgHandler(u8 evt, u8 status)
             DBG("ota=start\n");
             s_otaActive = 1;
             zb_setPollRate(QUEUE_POLL_RATE);      /* pull blocks quickly      */
-            /* Blink once to acknowledge, rather than pulsing for the whole
-             * download. led_pulse() runs a continuous PWM effect on a 20 ms
-             * tick, so over a ~12 minute transfer it burned LED current and
-             * ~36k CPU wakeups during the most power-hungry operation this
-             * device ever does — on a coin cell that adds to the supply sag
-             * exactly when the radio needs headroom. */
-            led_blink(1);
+            /* Brief flash on an interval, rather than a constant effect.
+             * led_pulse() ran continuous PWM on a 20 ms tick, so a ~12 minute
+             * transfer burned LED current and ~36k CPU wakeups during the most
+             * power-hungry operation this device performs — on a coin cell that
+             * adds to the supply sag exactly when the radio needs headroom. */
+            led_blink_ms(1, OTA_LED_FLASH_MS);
+            if (!s_otaLedTimer) {
+                s_otaLedTimer = TL_ZB_TIMER_SCHEDULE(ota_led_cb, NULL,
+                                                     OTA_LED_FLASH_INTERVAL_MS);
+            }
             s_otaLastOffset  = zcl_attr_fileOffset;
             s_otaStallChecks = 0;
             if (!s_otaProgTimer) {

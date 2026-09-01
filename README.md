@@ -114,8 +114,8 @@ contend for the coordinator and airtime, and blocks start failing to deliver
 
 Because this is a sleepy battery device it only fetches while awake, so
 **press the button** after starting the update to wake it — the transfer then
-runs at a fast poll rate (the LED blinks once to acknowledge the start) and
-the device reboots into the new image when finished. A stalled transfer is abandoned
+runs at a fast poll rate (the LED gives a brief flash once a second while it
+downloads) and the device reboots into the new image when finished. A stalled transfer is abandoned
 after `OTA_SESSION_MAX_S` (10 min) so it cannot drain the battery.
 
 > The OTA Upgrade cluster is advertised in the device's simple descriptor. A

@@ -120,7 +120,13 @@
 #define LED_RAMP_TRIPLE_MS        700      /* (700) triple-hold ramp (slowest)  */
 #define LED_BLINK_MS              100      /* (100) single click blink          */
 #define LED_PAIR_BLINK_MS         200      /* (200) pairing fast blink          */
-#define LED_OTA_PULSE_MS          1000     /* (1000) OTA slow pulse             */
+/* OTA progress indication: a brief flash on an interval rather than a constant
+ * effect. At 40 ms per 1000 ms that is ~4% duty, so a ~12 minute download
+ * costs a few seconds of LED-on instead of minutes — the radio needs the
+ * supply headroom far more than the LED does. 40 ms is 2x LED_STEP_MS so the
+ * effect tick lands on it exactly. */
+#define OTA_LED_FLASH_MS          40       /* flash length during OTA           */
+#define OTA_LED_FLASH_INTERVAL_MS 1000     /* how often to flash during OTA     */
 #define LED_STEP_MS               20       /* (20) PWM update tick for ramps    */
 #define LED_PWM_HZ                1000     /* (1000) PWM carrier frequency      */
 

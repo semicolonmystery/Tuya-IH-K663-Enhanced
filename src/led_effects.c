@@ -58,8 +58,8 @@ static int led_timer_cb(void *arg)
 {
     switch (s_mode) {
     case MODE_BLINK: {
-        /* Each blink = LED_BLINK_MS on + LED_BLINK_MS off. */
-        u32 half = LED_BLINK_MS;
+        /* Each blink = s_period on + s_period off (led_blink uses LED_BLINK_MS). */
+        u32 half = s_period;
         u32 done = (u32)s_blinks * 2 * half;
         if (s_elapsed >= done) {
             led_set_pct(0);
@@ -117,6 +117,13 @@ void led_blink(u8 count)
     if (count == 0) return;
     s_blinks = count;
     start(MODE_BLINK, LED_BLINK_MS, 1);
+}
+
+void led_blink_ms(u8 count, u16 on_ms)
+{
+    if (count == 0) return;
+    s_blinks = count;
+    start(MODE_BLINK, on_ms, 1);
 }
 
 void led_ramp(u16 period_ms, u8 up)

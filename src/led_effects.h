@@ -15,6 +15,10 @@ void led_init(void);
 /* One-shot: N quick blinks then off (click feedback). */
 void led_blink(u8 count);
 
+/* Same, but with an explicit half-period — for a short, low-duty flash.
+ * Round to a multiple of LED_STEP_MS so the tick resolves it cleanly. */
+void led_blink_ms(u8 count, u16 on_ms);
+
 /* Continuous sawtooth brightness ramp with the given period; up=1 sweeps
  * 0->100%, up=0 sweeps 100->0%. Used for hold gestures (period distinguishes
  * single/double/triple). Runs until led_stop(). */
