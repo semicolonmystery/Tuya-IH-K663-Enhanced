@@ -205,6 +205,13 @@
 #define RESET_TRIGGER_CLICKS             4     /* clicks before the reset hold    */
 #define RESET_TRIGGER_HOLD_MS            5000  /* hold on the next press to reset */
 #define PAIR_WINDOW_MS                   30000 /* (30000) steering window         */
+/* Fallback: reboot this long after zb_factoryReset() if the leave confirm never
+ * arrives (e.g. the parent is already unreachable). NV is cleared either way. */
+#define RESET_LEAVE_TIMEOUT_MS           3000
+/* Max random delay before steering after boot, mirroring the SDK sample: avoids
+ * a pile of devices steering in lockstep, and keeps bdb_networkSteerStart() out
+ * of the bdb init callback itself. */
+#define STEER_START_JITTER_MS            4000
 
 /* ============================================================================
  * F11 — OTA. Initiated from Z2M only: the device advertises the OTA cluster and

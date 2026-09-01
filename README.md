@@ -73,7 +73,16 @@ Every `*_hold_stop` also publishes **`action_duration`** (ms). It persists in Z2
 rather than resetting to null, so automations can read it after the fact.
 
 **Pairing / factory reset** = 4 clicks then hold the 5th press for 5 s. The LED
-blinks fast while the device is joining. The 20 s hold is a stuck-button guard:
+blinks fast while the device is joining.
+
+This is a **true factory reset**: the device broadcasts a Leave, clears the
+binding table and erases NV (network keys, bindings, reporting configuration),
+then reboots factory-new and pairs from scratch. Everything configured before is
+forgotten — you will need to re-create your light bindings afterwards.
+
+A factory-new device (fresh flash, or just after a reset) pairs automatically on
+boot for `PAIR_WINDOW_MS`, with the pairing LED running. If no network is found
+it stops rather than steering indefinitely; re-run the gesture to try again. The 20 s hold is a stuck-button guard:
 it abandons the gesture and lets the device sleep so a wedged button cannot
 flatten the cell.
 
@@ -222,11 +231,13 @@ Run against a flashed device joined to Z2M, watching `./debug.sh`.
 
 1. **Boot** — banner prints model + firmware version; LED blinks 3×; `batt=` line
    shows a sane voltage and percentage.
-2. **Pairing/reset (F10)** — 4 clicks then hold the 5th press 5 s → `gesture=reset`,
-   LED fast-blinks, `net=pairing` → `net=joined`. In the Z2M log the interview
-   must be followed by `Configuring` **and** `Successfully configured` — an
-   interview that succeeds with no configure line means the commissioning
-   fast-poll window is not holding.
+2. **Pairing/reset (F10)** — 4 clicks then hold the 5th press 5 s. On a device
+   that is currently joined expect `gesture=reset` → `net=factory_reset` → the
+   device **reboots** (boot banner) → `net=steering` → `net=joined`. Seeing
+   `net=joined` immediately with no reboot means the reset did not happen. In
+   the Z2M log the interview must be followed by `Configuring` **and**
+   `Successfully configured` — an interview that succeeds with no configure line
+   means the commissioning fast-poll window is not holding.
 3. **Gestures (F2/F8)** — each row of the gesture table produces the expected
    `gesture=` line and the matching Z2M `action`.
 4. **Hold duration** — every `*_hold_stop` reports a plausible `dur=`, and Z2M's

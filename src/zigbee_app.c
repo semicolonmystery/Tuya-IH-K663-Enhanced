@@ -177,8 +177,15 @@ static const zcl_specClusterInfo_t g_appClusterList[] = {
 /* ---------------------------------------------------------------------------
  * ZDO / BDB callbacks + pairing (F10)
  * ------------------------------------------------------------------------- */
+static void app_leaveCnfHandler(nlme_leave_cnf_t *p);
+
 const zdo_appIndCb_t appCbLst = {
-    bdb_zdoStartDevCnf, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    bdb_zdoStartDevCnf,   /* start device cnf                                  */
+    NULL,                 /* reset cnf                                         */
+    NULL,                 /* device announce ind                               */
+    NULL,                 /* leave ind                                         */
+    app_leaveCnfHandler,  /* leave cnf — completes the factory reset (F10)      */
+    NULL, NULL, NULL, NULL, NULL, NULL,
 };
 
 bdb_commissionSetting_t g_bdbCommissionSetting = {
@@ -196,6 +203,9 @@ bdb_commissionSetting_t g_bdbCommissionSetting = {
 static u8 s_pairing;
 static ev_timer_event_t *s_pairTimer;
 
+static ev_timer_event_t *s_steerTimer;
+static ev_timer_event_t *s_resetTimer;
+
 static int pair_timeout_cb(void *arg)
 {
     if (s_pairing) {
@@ -207,32 +217,94 @@ static int pair_timeout_cb(void *arg)
     return -1;
 }
 
-/* Reset gesture (F10): begin network steering with the pairing LED. On a fresh
- * flash this joins Z2M. (Leave-and-rejoin for re-pairing an already-joined
- * device is refined with the sleep/network work in Test 2.) */
-static void start_pairing(void)
-{
-    DBG("net=pairing\n");
-#if ZCL_POLL_CTRL_SUPPORT
-    /* Leaving the old network: stop checking in and close any fast-poll
-     * window, so we cannot keep fast-polling with no parent. */
-    pollctrl_stop();
-#endif
-    s_pairing = 1;
-    led_pair();
-    bdb_networkSteerStart();
-    if (s_pairTimer) TL_ZB_TIMER_CANCEL(&s_pairTimer);
-    s_pairTimer = TL_ZB_TIMER_SCHEDULE(pair_timeout_cb, NULL, PAIR_WINDOW_MS);
-}
-
-/* Network join succeeded — settle poll rate and clear pairing UI. */
-static void app_on_joined(void)
+/* Stop showing/counting the pairing attempt. */
+static void pairing_ui_end(void)
 {
     if (s_pairing) {
         s_pairing = 0;
         if (s_pairTimer) TL_ZB_TIMER_CANCEL(&s_pairTimer);
         led_stop();
     }
+}
+
+static int steer_start_cb(void *arg)
+{
+    s_steerTimer = NULL;
+    DBG("net=steering\n");
+    s_pairing = 1;
+    led_pair();
+    bdb_networkSteerStart();
+    if (s_pairTimer) TL_ZB_TIMER_CANCEL(&s_pairTimer);
+    s_pairTimer = TL_ZB_TIMER_SCHEDULE(pair_timeout_cb, NULL, PAIR_WINDOW_MS);
+    return -1;
+}
+
+/* Start steering shortly, with jitter. Deferred rather than called inline
+ * because bdb_networkSteerStart() must not run from inside the bdb init
+ * callback (this mirrors the SDK's sampleContactSensor). */
+static void schedule_steering(void)
+{
+    u16 jitter = (u16)(zb_random() % STEER_START_JITTER_MS);
+    if (!jitter) {
+        jitter = 100;
+    }
+    if (s_steerTimer) TL_ZB_TIMER_CANCEL(&s_steerTimer);
+    s_steerTimer = TL_ZB_TIMER_SCHEDULE(steer_start_cb, NULL, jitter);
+}
+
+static int reset_reboot_cb(void *arg)
+{
+    /* The leave confirm never came (no reachable parent, say). NV is cleared
+     * regardless, so reboot anyway rather than sitting in a half-left state. */
+    s_resetTimer = NULL;
+    DBG("net=reset_reboot\n");
+    SYSTEM_RESET();
+    return -1;
+}
+
+static void app_leaveCnfHandler(nlme_leave_cnf_t *p)
+{
+    (void)p;
+    /* Factory reset finished leaving the network. Reboot so the stack comes up
+     * genuinely factory-new; app_bdbInitCb() then steers, making one gesture
+     * mean "forget everything and pair again". */
+    SYSTEM_RESET();
+}
+
+/* Reset gesture (F10) — a TRUE factory reset when already joined.
+ *
+ * This used to call bdb_networkSteerStart() only. On a device that is already
+ * on a network that is effectively a no-op: it reports joined again straight
+ * away, so the LED effect ended instantly and nothing was actually reset —
+ * which is exactly how the gesture behaved in the field. Now we leave the
+ * network, drop every binding and clear NV, then reboot factory-new and pair
+ * from scratch. */
+static void start_pairing(void)
+{
+#if ZCL_POLL_CTRL_SUPPORT
+    /* Stop checking in and close any fast-poll window before we drop the net. */
+    pollctrl_stop();
+#endif
+
+    if (zb_isDeviceJoinedNwk()) {
+        DBG("net=factory_reset\n");
+        led_pair();
+        aps_bindingTab_clear();   /* explicit: forget every binding */
+        zb_factoryReset();        /* broadcast Leave, then factory-new reset */
+        if (s_resetTimer) TL_ZB_TIMER_CANCEL(&s_resetTimer);
+        s_resetTimer = TL_ZB_TIMER_SCHEDULE(reset_reboot_cb, NULL,
+                                            RESET_LEAVE_TIMEOUT_MS);
+        return;                   /* reboot completes it */
+    }
+
+    /* Already factory-new — just pair. */
+    schedule_steering();
+}
+
+/* Network join succeeded — settle poll rate and clear pairing UI. */
+static void app_on_joined(void)
+{
+    pairing_ui_end();
 #ifdef ZB_ED_ROLE
     /* Set the poll rate explicitly after (re)connect — the stack can otherwise
      * miss scheduling the poll task on a fast reconnect (per romasku). */
@@ -262,12 +334,17 @@ static void app_bdbInitCb(u8 status, u8 joinedNetwork)
     if (status == BDB_INIT_STATUS_SUCCESS) {
         if (joinedNetwork) {
             app_on_joined();
+        } else {
+            /* Factory-new: either a fresh flash, or we just rebooted out of the
+             * reset gesture. Pair, so one gesture really is "forget everything
+             * and join again". Bounded by PAIR_WINDOW_MS — if no network is
+             * found we stop rather than steering indefinitely. */
+            schedule_steering();
         }
     } else if (joinedNetwork) {
         /* Was joined but init couldn't reach the network — let the stack rejoin. */
         zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
     }
-    /* Steering is only started by the reset gesture (F10) — never here. */
 }
 
 /* F9 — the whole application-level rejoin policy: hand parent-loss / scan-failure
@@ -281,14 +358,19 @@ static void app_bdbCommissioningCb(u8 status, void *arg)
         app_on_joined();
         break;
 
-    case BDB_COMMISSION_STA_NO_SCAN_RESPONSE:
-    case BDB_COMMISSION_STA_PARENT_LOST:
-        DBG("rejoin=backoff\n");
-        zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
+    case BDB_COMMISSION_STA_NO_NETWORK:
+        /* Steering found nothing. Stop the pairing UI instead of leaving the LED
+         * running with a half-alive steer that could latch onto some network
+         * later — the user re-runs the gesture to try again. */
+        DBG("net=no_network\n");
+        pairing_ui_end();
         break;
 
+    case BDB_COMMISSION_STA_NO_SCAN_RESPONSE:
+    case BDB_COMMISSION_STA_PARENT_LOST:
     case BDB_COMMISSION_STA_REJOIN_FAILURE:
-        /* Guard so a never-joined (factory-new) device doesn't loop. */
+        /* Guard so a never-joined (factory-new) device doesn't loop: rejoin
+         * needs stored network state, so retrying it would only burn battery. */
         if (!zb_isDeviceFactoryNew()) {
             DBG("rejoin=backoff\n");
             zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
