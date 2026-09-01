@@ -236,7 +236,16 @@ static void app_on_joined(void)
 #ifdef ZB_ED_ROLE
     /* Set the poll rate explicitly after (re)connect — the stack can otherwise
      * miss scheduling the poll task on a fast reconnect (per romasku). */
+#if ZCL_POLL_CTRL_SUPPORT
+    /* ...but hold the FAST rate through commissioning first. Z2M's interview and
+     * configure() are coordinator->device requests, and a parent only buffers
+     * data for a sleepy child for ~7.7 s; at the 60 s idle poll those requests
+     * expire before we ask for them and configure never completes. Drops to the
+     * idle poll on its own when the window closes. */
+    pollctrl_fast_window(POLL_CTRL_JOIN_FAST_POLL_S);
+#else
     zb_setPollRate(POLL_RATE);
+#endif
 #endif
 #if ZCL_POLL_CTRL_SUPPORT
     /* Begin periodic check-ins so the coordinator can still reach us despite

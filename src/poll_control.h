@@ -55,6 +55,13 @@ void pollctrl_start(void);
  * device leaves the network so it cannot keep fast-polling with no parent. */
 void pollctrl_stop(void);
 
+/* Open a locally-initiated fast-poll window of `seconds`. Used after joining so
+ * the coordinator can complete the interview and configure() before we drop to
+ * the slow idle poll. Unlike a coordinator-requested window this is not
+ * clamped to fastPollTimeoutMax — it is bounded by its own argument and only
+ * we can start it. */
+void pollctrl_fast_window(u16 seconds);
+
 /* Re-apply the poll rate this module thinks is correct (long, or short while a
  * fast-poll window is open). Called when OTA releases the rate. */
 void pollctrl_restore_rate(void);

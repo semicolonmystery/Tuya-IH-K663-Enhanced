@@ -156,6 +156,13 @@
 #define POLL_CTRL_SHORT_POLL_MS           250  /* fast-poll rate when told to    */
 #define POLL_CTRL_FAST_POLL_TIMEOUT_S     10   /* default fast-poll window       */
 #define POLL_CTRL_FAST_POLL_TIMEOUT_MAX_S 60   /* hard cap on any fast-poll ask  */
+/* Commissioning window: stay on the fast poll for this long after joining.
+ * Z2M's interview and especially configure() (binds + reporting setup) are
+ * coordinator->device requests, and a parent only buffers data for a sleepy
+ * child for about 7.7 s (nwkTransactionPersistenceTime). At the 60 s idle
+ * poll those requests expire before we ever ask for them, so configure never
+ * completes. Costs one burst of polls per pairing, which is negligible. */
+#define POLL_CTRL_JOIN_FAST_POLL_S        120
 
 /* ============================================================================
  * F9 — Network: join / rejoin / reparent (highest-risk area).

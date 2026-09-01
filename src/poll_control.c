@@ -81,6 +81,19 @@ static void fast_poll_begin(u32 qs)
                                            qs * POLL_RATE_QUARTERSECONDS);
 }
 
+void pollctrl_fast_window(u16 seconds)
+{
+    if (!seconds) {
+        return;
+    }
+    if (s_fastPollTimer) {
+        TL_ZB_TIMER_CANCEL(&s_fastPollTimer);
+    }
+    set_fast_poll(1);
+    s_fastPollTimer = TL_ZB_TIMER_SCHEDULE(fast_poll_timeout_cb, NULL,
+                                           (u32)seconds * 1000);
+}
+
 static void fast_poll_end(void)
 {
     if (s_fastPollTimer) {

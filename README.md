@@ -188,6 +188,14 @@ short window where it can actually talk to the device (attribute reads, config,
 starting an OTA). Z2M can also change these at runtime, and `genPollCtrl` is
 bound during `configure` so check-ins reach the coordinator.
 
+**Commissioning window.** On joining, the device holds the *fast* poll for
+`POLL_CTRL_JOIN_FAST_POLL_S` (120 s) before dropping to the idle rate. Z2M's
+interview and especially `configure()` (binds + reporting setup) are
+coordinator→device requests, and a parent only buffers data for a sleepy child
+for about 7.7 s — at a 60 s idle poll those requests expire before the device
+ever asks for them, and `configure` silently never completes. The window costs
+one burst of polls per pairing.
+
 Two safety properties are enforced in firmware, both deliberately:
 
 - A fast-poll window is **always** time-bounded and clamped to
@@ -201,7 +209,12 @@ default is 256 minutes, far longer than any poll interval here.
 
 > Practical consequence, and it matches how commercial battery remotes behave:
 > **press the button** to wake the device when you want Z2M to talk to it —
-> pairing, `Reconfigure`, or starting an OTA.
+> `Reconfigure` or starting an OTA.
+>
+> If a Z2M operation that pushes several requests at once (notably
+> `Reconfigure`) does not complete, re-pair the device instead: 4 clicks + a 5 s
+> hold. Re-joining opens the 120 s commissioning window above, which is the
+> reliable way to give Z2M a long enough conversation.
 
 ## Acceptance checklist
 
@@ -210,7 +223,10 @@ Run against a flashed device joined to Z2M, watching `./debug.sh`.
 1. **Boot** — banner prints model + firmware version; LED blinks 3×; `batt=` line
    shows a sane voltage and percentage.
 2. **Pairing/reset (F10)** — 4 clicks then hold the 5th press 5 s → `gesture=reset`,
-   LED fast-blinks, `net=pairing` → `net=joined`.
+   LED fast-blinks, `net=pairing` → `net=joined`. In the Z2M log the interview
+   must be followed by `Configuring` **and** `Successfully configured` — an
+   interview that succeeds with no configure line means the commissioning
+   fast-poll window is not holding.
 3. **Gestures (F2/F8)** — each row of the gesture table produces the expected
    `gesture=` line and the matching Z2M `action`.
 4. **Hold duration** — every `*_hold_stop` reports a plausible `dur=`, and Z2M's
