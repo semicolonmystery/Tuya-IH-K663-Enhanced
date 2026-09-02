@@ -95,6 +95,58 @@ flatten the cell.
    deliberately does *not* create light bindings itself, so it never fights your
    own. It only binds `genPowerCfg` + `genMultistateInput` to the coordinator.
 
+## Using the actions in Home Assistant
+
+`action` is an **event**, not a state, so Zigbee2MQTT deliberately does not create
+a `sensor.<device>_action` entity for it by default — unlike `battery`,
+`voltage` or `action_duration`, which are states and do get entities. The
+gestures are still published; you just pick how you want to consume them.
+
+**1. Device triggers (built in, no config).** HA → Settings → Automations → new
+automation → *Add trigger* → *Device* → pick the remote. The gestures appear as
+triggers.
+
+> Gotcha: Z2M only discovers a device trigger **after that action has fired at
+> least once**. On a freshly paired remote the list is empty or partial. Press
+> each gesture once (single/double/triple click, and each hold) and they appear.
+> This catches almost everyone.
+
+**2. An `event` entity (modern, recommended).** In Z2M `configuration.yaml`:
+
+```yaml
+homeassistant:
+  experimental_event_entities: true
+```
+
+You get an `event` entity whose `event_type` is the action — clean to use in
+automations and visible in the UI.
+
+**3. A plain sensor entity (simplest).** If you specifically want
+`sensor.<device>_action`:
+
+```yaml
+homeassistant:
+  legacy_action_sensor: true
+```
+
+The sensor takes the action value then returns to empty, so trigger on the state
+changing **to** a specific value, e.g. `single_click`.
+
+Restart Z2M after changing any of these.
+
+**4. Or skip HA entities entirely** and trigger on MQTT directly:
+
+```yaml
+triggers:
+  - trigger: mqtt
+    topic: zigbee2mqtt/<your device>
+    value_template: "{{ value_json.action }}"
+    payload: single_hold_stop
+```
+
+This also gives you `action_duration` in the same payload, which is handy for
+"how long was it held" automations.
+
 ## OTA updates
 
 Updates are **initiated from Zigbee2MQTT** — there is no on-device OTA gesture.
