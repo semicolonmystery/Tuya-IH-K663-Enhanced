@@ -24,6 +24,7 @@
 #include "battery.h"
 #include "action_cache.h"
 #include "poll_control.h"
+#include "rejoin.h"
 #include "debug.h"
 
 
@@ -142,7 +143,7 @@ app_pollCtrlAttr_t g_pollCtrlAttrs = {
     .chkInInterval       = POLL_CTRL_CHECKIN_INTERVAL_S * 4,
     .longPollInterval    = POLL_CTRL_LONG_POLL_S * 4,
     .chkInIntervalMin    = 4,                            /* never faster than 1 s */
-    .longPollIntervalMin = 4,
+    .longPollIntervalMin = POLL_CTRL_LONG_POLL_MIN_S * 4,
     .shortPollInterval   = POLL_CTRL_SHORT_POLL_MS / 250,
     .fastPollTimeout     = POLL_CTRL_FAST_POLL_TIMEOUT_S * 4,
     /* Hard cap on any fast-poll window the coordinator asks for. The SDK sample
@@ -178,13 +179,14 @@ static const zcl_specClusterInfo_t g_appClusterList[] = {
  * ZDO / BDB callbacks + pairing (F10)
  * ------------------------------------------------------------------------- */
 static void app_leaveCnfHandler(nlme_leave_cnf_t *p);
+static void app_leaveIndHandler(nlme_leave_ind_t *p);
 
 const zdo_appIndCb_t appCbLst = {
     bdb_zdoStartDevCnf,   /* start device cnf                                  */
     NULL,                 /* reset cnf                                         */
     NULL,                 /* device announce ind                               */
-    NULL,                 /* leave ind                                         */
-    app_leaveCnfHandler,  /* leave cnf — completes the factory reset (F10)      */
+    app_leaveIndHandler,  /* leave ind — carries the "may rejoin" flag (F9b) */
+    app_leaveCnfHandler,  /* leave cnf — completes the factory reset (F10)  */
     NULL, NULL, NULL, NULL, NULL, NULL,
 };
 
@@ -205,6 +207,12 @@ static ev_timer_event_t *s_pairTimer;
 
 static ev_timer_event_t *s_steerTimer;
 static ev_timer_event_t *s_resetTimer;
+/* Set only by the reset gesture, so a Leave that we did NOT ask for is not
+ * mistaken for the end of a factory reset (see app_leaveCnfHandler). */
+static u8 s_resetInitiated;
+/* Set from the Leave INDICATION, which is the only place the "you may rejoin"
+ * flag appears - the confirm does not carry it. */
+static u8 s_leaveRejoin;
 
 static int pair_timeout_cb(void *arg)
 {
@@ -262,12 +270,32 @@ static int reset_reboot_cb(void *arg)
     return -1;
 }
 
+/* A router aging out a child sends Leave with the rejoin flag set, meaning
+ * "go find another parent", not "you are removed". Remember which it was. */
+static void app_leaveIndHandler(nlme_leave_ind_t *p)
+{
+    s_leaveRejoin = p ? p->rejoin : 0;
+    DBG("net=leave_ind rejoin=%d\n", (int)s_leaveRejoin);
+}
+
 static void app_leaveCnfHandler(nlme_leave_cnf_t *p)
 {
     (void)p;
-    /* Factory reset finished leaving the network. Reboot so the stack comes up
-     * genuinely factory-new; app_bdbInitCb() then steers, making one gesture
-     * mean "forget everything and pair again". */
+
+    if (!s_resetInitiated && s_leaveRejoin) {
+        /* Told to leave but allowed back. Rebooting here would land us
+         * factory-new, steering for one 30 s window and then giving up —
+         * offline for good. Go find a parent instead. */
+        DBG("net=left_rejoin\n");
+        s_leaveRejoin = 0;
+        rejoin_start("leave_rejoin");
+        return;
+    }
+
+    /* Either our own factory reset finished, or we were genuinely removed with
+     * no rejoin allowed. Reboot so the stack comes up factory-new;
+     * app_bdbInitCb() then steers, making one gesture mean "forget everything
+     * and pair again". */
     SYSTEM_RESET();
 }
 
@@ -285,9 +313,11 @@ static void start_pairing(void)
     /* Stop checking in and close any fast-poll window before we drop the net. */
     pollctrl_stop();
 #endif
+    rejoin_stop();   /* never keep hunting for a network we are leaving */
 
     if (zb_isDeviceJoinedNwk()) {
         DBG("net=factory_reset\n");
+        s_resetInitiated = 1;
         led_pair();
         aps_bindingTab_clear();   /* explicit: forget every binding */
         zb_factoryReset();        /* broadcast Leave, then factory-new reset */
@@ -342,38 +372,47 @@ static void app_bdbInitCb(u8 status, u8 joinedNetwork)
             schedule_steering();
         }
     } else if (joinedNetwork) {
-        /* Was joined but init couldn't reach the network — let the stack rejoin. */
-        zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
+        /* Was joined but init couldn't reach the network — hunt for a parent. */
+        rejoin_start("init");
     }
 }
 
-/* F9 — the whole application-level rejoin policy: hand parent-loss / scan-failure
- * back to the stack's own backoff-driven rejoin. The backoff SCHEDULE is config
- * in zb_config.h (battery-safe max backoff), not code. */
+/* F9/F9b — the application-level rejoin policy. Parent loss and rejoin failure
+ * hand off to the bounded campaign in rejoin.c rather than to the stack's own
+ * backoff: that backoff grows toward CFG_ZDO_MAX_REJOIN_BACKOFF_TIME, so once a
+ * device has been away a while its next attempt can be half an hour out — which
+ * is why carrying the remote to a room served by another router left it offline
+ * for hours. The SDK's own samples do the same thing (every
+ * zb_rejoinReqWithBackOff call in apps/sampleSwitch is commented out). */
 static void app_bdbCommissioningCb(u8 status, void *arg)
 {
     DBG("net=commission status=%d\n", status);
     switch (status) {
     case BDB_COMMISSION_STA_SUCCESS:
+        rejoin_stop();      /* we have a parent - stop hunting for one */
         app_on_joined();
         break;
 
     case BDB_COMMISSION_STA_NO_NETWORK:
+    case BDB_COMMISSION_STA_TCLK_EX_FAILURE:   /* joined, then key exchange failed */
         /* Steering found nothing. Stop the pairing UI instead of leaving the LED
          * running with a half-alive steer that could latch onto some network
          * later — the user re-runs the gesture to try again. */
-        DBG("net=no_network\n");
+        DBG("net=steer_failed\n");
         pairing_ui_end();
         break;
 
-    case BDB_COMMISSION_STA_NO_SCAN_RESPONSE:
     case BDB_COMMISSION_STA_PARENT_LOST:
+        DBG("net=parent_lost\n");
+        rejoin_start("parent_lost");
+        break;
+
+    case BDB_COMMISSION_STA_NO_SCAN_RESPONSE:
     case BDB_COMMISSION_STA_REJOIN_FAILURE:
-        /* Guard so a never-joined (factory-new) device doesn't loop: rejoin
-         * needs stored network state, so retrying it would only burn battery. */
-        if (!zb_isDeviceFactoryNew()) {
-            DBG("rejoin=backoff\n");
-            zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
+        /* rejoin.c owns the attempt budget, so re-entering here continues the
+         * current campaign instead of starting an unbounded retry loop. */
+        if (!rejoin_active()) {
+            rejoin_start("rejoin_failed");
         }
         break;
 
@@ -576,11 +615,14 @@ static void on_gesture(const gesture_event_t *e)
         DBG("gesture=%s dur=%d\n", gesture_name(e->id), (int)e->duration_ms);
     }
 
-    /* F9: a real press while offline kicks an immediate rejoin instead of waiting
-     * out the current backoff. */
-    if (e->id != G_CLICK_TICK && !s_pairing && !zb_isDeviceJoinedNwk()) {
-        DBG("rejoin=button\n");
-        zb_rejoinReqWithBackOff(zb_apsChannelMaskGet(), g_bdbAttrs.scanDuration);
+    /* F9b: waking the remote is what starts a hunt for a parent. A press while
+     * unreachable begins a campaign immediately; the explicit REJOIN gesture does
+     * so even when the stack still believes it is joined, which is the only way
+     * out if that belief is stale. */
+    if (e->id == G_REJOIN) {
+        rejoin_start("gesture");
+    } else if (e->id != G_CLICK_TICK && !s_pairing && !zb_isDeviceJoinedNwk()) {
+        rejoin_start("button");
     }
 
     switch (e->id) {
@@ -797,7 +839,15 @@ static void app_otaProcessMsgHandler(u8 evt, u8 status)
 
     case OTA_EVT_IMAGE_DONE:
         DBG("ota=image_done\n");
+        /* Hand the rate back to poll control rather than setting POLL_RATE here:
+         * a raw set would also stomp any fast-poll window that is still open,
+         * and at a 30 min idle poll that is the difference between finishing the
+         * exchange and waiting half an hour for the next chance. */
+#if ZCL_POLL_CTRL_SUPPORT
+        pollctrl_restore_rate();
+#else
         zb_setPollRate(POLL_RATE);
+#endif
         break;
 
     case OTA_EVT_COMPLETE:

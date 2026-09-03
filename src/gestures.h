@@ -21,6 +21,8 @@ typedef enum {
     G_TRIPLE_HOLD_START,
     G_TRIPLE_HOLD_STOP,
     G_RESET,          /* RESET_TRIGGER_CLICKS clicks + long hold (F10)        */
+    G_REJOIN,         /* REJOIN_TRIGGER_CLICKS plain clicks (F9b) - hunt for a
+                       * new parent now. Not a published action.              */
     G_STUCK,          /* button held past STUCK_BUTTON_MS — abandon (F4)      */
     G_CLICK_TICK,     /* one short click just registered — LED feedback only,
                        * emitted per press so the LED blinks "as they register".

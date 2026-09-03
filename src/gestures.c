@@ -9,6 +9,9 @@
  *     Emits *_HOLD_START, then *_HOLD_STOP with the total held duration.
  *   - RESET_TRIGGER_CLICKS clicks then a press held >= RESET_TRIGGER_HOLD_MS
  *     -> G_RESET (pairing / factory reset).
+ *   - REJOIN_TRIGGER_CLICKS plain clicks -> G_REJOIN (hunt for a new parent).
+ *     Deliberately one more click than the reset prefix, so aiming for a reset
+ *     and releasing the final press early asks for a rejoin instead of nothing.
  *   - A press held past STUCK_BUTTON_MS -> G_STUCK; the eventual release is
  *     silently swallowed.
  ********************************************************************************/
@@ -73,7 +76,8 @@ static void emit_clicks(u8 n)
     if (n == 1) emit(G_SINGLE_CLICK, 0);
     else if (n == 2) emit(G_DOUBLE_CLICK, 0);
     else if (n == 3) emit(G_TRIPLE_CLICK, 0);
-    /* 4..9 clicks: no defined gesture (silently ignored). */
+    else if (n == REJOIN_TRIGGER_CLICKS) emit(G_REJOIN, 0);
+    /* Other counts in 4..9: no defined gesture (silently ignored). */
 }
 
 /* Emit HOLD_START for a hold at count 1..3. */
@@ -198,6 +202,7 @@ const char *gesture_name(gesture_id_t id)
     case G_TRIPLE_HOLD_START: return "triple_hold_start";
     case G_TRIPLE_HOLD_STOP:  return "triple_hold_stop";
     case G_RESET:             return "reset";
+    case G_REJOIN:            return "rejoin";
     case G_STUCK:             return "stuck";
     case G_CLICK_TICK:        return "click_tick";
     default:                  return "none";

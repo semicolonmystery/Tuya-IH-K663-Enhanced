@@ -157,32 +157,57 @@
  * converted at the attribute table. A long poll is safe against parent child
  * aging: the Zigbee end-device timeout default is 256 minutes.
  * ========================================================================== */
-#define POLL_CTRL_LONG_POLL_S             60   /* idle poll — main battery knob  */
+#define POLL_CTRL_LONG_POLL_S             1800 /* idle poll — main battery knob  */
 #define POLL_CTRL_CHECKIN_INTERVAL_S      3600 /* (1 h) check-in to coordinator  */
 #define POLL_CTRL_SHORT_POLL_MS           250  /* fast-poll rate when told to    */
 #define POLL_CTRL_FAST_POLL_TIMEOUT_S     10   /* default fast-poll window       */
 #define POLL_CTRL_FAST_POLL_TIMEOUT_MAX_S 60   /* hard cap on any fast-poll ask  */
+/* Floor a coordinator may write via Set Long Poll Interval. Without it a
+ * misbehaving coordinator could pin us at a 1 s long poll and flatten the cell
+ * (matches the EFR32 sibling project's LongPollIntervalMin guard). */
+#define POLL_CTRL_LONG_POLL_MIN_S         5    /* min long poll a client may set */
 /* Commissioning window: stay on the fast poll for this long after joining.
  * Z2M's interview and especially configure() (binds + reporting setup) are
  * coordinator->device requests, and a parent only buffers data for a sleepy
- * child for about 7.7 s (nwkTransactionPersistenceTime). At the 60 s idle
+ * child for about 7.7 s (nwkTransactionPersistenceTime). At the idle
  * poll those requests expire before we ever ask for them, so configure never
  * completes. Costs one burst of polls per pairing, which is negligible. */
 #define POLL_CTRL_JOIN_FAST_POLL_S        120
 
 /* ============================================================================
  * F9 — Network: join / rejoin / reparent (highest-risk area).
- * These feed configs/zb_config.h. Start from romasku's proven values, then
- * raise the MAX backoff and normal poll for a battery ZED so an unreachable
- * network cannot drain the coin cell. Tradeoff: bigger backoff = slower
- * reconnect but far less battery use while the network is gone.
+ * These feed configs/zb_config.h and shape the STACK's own backoff, which is
+ * now only a fallback — reparenting is driven by the F9b campaign below. The
+ * ceiling still matters: it bounds how often a device with no reachable network
+ * retries on its own, so it stays large enough not to drain the coin cell.
  * ========================================================================== */
 #define CFG_ZDO_REJOIN_TIMES              5    /* rejoin attempts per burst      */
 #define CFG_ZDO_REJOIN_DURATION           6    /* rejoin scan duration (s)       */
 #define CFG_ZDO_REJOIN_BACKOFF_TIME       30   /* initial backoff (s)            */
-#define CFG_ZDO_MAX_REJOIN_BACKOFF_TIME   3600 /* max backoff (s) — battery-safe */
+#define CFG_ZDO_MAX_REJOIN_BACKOFF_TIME   1800 /* max backoff (s) — battery-safe */
 #define CFG_ZDO_REJOIN_BACKOFF_ITERATION  8    /* backoff growth iterations      */
-#define CFG_ZDO_MAX_PARENT_THRESHOLD_RETRY 5   /* parent-loss retry threshold    */
+#define CFG_ZDO_MAX_PARENT_THRESHOLD_RETRY 3   /* parent-loss retry threshold    */
+
+/* ============================================================================
+ * F9b — Parent loss and reparenting.
+ *
+ * The stack's own backoff above is only a fallback now. Reparenting is driven by
+ * an app-owned CAMPAIGN (src/rejoin.c): losing the parent, or any button press
+ * while unreachable, fires a short burst of rejoin attempts and then STOPS
+ * completely, so a remote left somewhere with no network in range cannot scan
+ * itself flat. The next wake starts a fresh campaign.
+ *
+ * Each attempt alternates the rejoin security mode, mirroring the SDK's own
+ * sampleSwitch_rejoinBackoff(): a secure rejoin keeps the network key, a
+ * trust-center (insecure) rejoin is what works when it will not be accepted.
+ * ========================================================================== */
+#define REJOIN_TRIGGER_CLICKS             5    /* clicks that force a campaign    */
+#define REJOIN_ATTEMPT_INTERVAL_MS        60000 /* gap between attempts          */
+#define REJOIN_CAMPAIGN_ATTEMPTS          5    /* attempts, then stop until woken */
+/* Fast-poll window opened around each attempt so the Rejoin Response is actually
+ * collected: a parent only buffers indirect data for ~7.7 s, far under the idle
+ * poll, so without this the response expires before we ask for it. */
+#define REJOIN_FAST_POLL_S                8
 
 /* Poll rates (ms). Long normal poll for a battery ZED; the stack uses the
  * faster rates only during active exchanges.
@@ -194,6 +219,16 @@
 #define CFG_POLL_RATE_RESPONSE_MS         250  /* when coordinator has data       */
 #define CFG_POLL_RATE_QUEUE_MS            250  /* when outbound queued            */
 #define CFG_POLL_RATE_REJOIN_MS           500  /* during rejoin                   */
+
+/* The Poll Control server rejects a long poll interval longer than the check-in
+ * interval, and one shorter than the advertised minimum. Catch either at compile
+ * time rather than shipping a cluster that refuses its own defaults. */
+#if POLL_CTRL_LONG_POLL_S > POLL_CTRL_CHECKIN_INTERVAL_S
+#error "POLL_CTRL_LONG_POLL_S must be <= POLL_CTRL_CHECKIN_INTERVAL_S"
+#endif
+#if POLL_CTRL_LONG_POLL_S < POLL_CTRL_LONG_POLL_MIN_S
+#error "POLL_CTRL_LONG_POLL_S must be >= POLL_CTRL_LONG_POLL_MIN_S"
+#endif
 
 /* Binding table (F: command delivery is binding-table only). */
 #define BINDING_TABLE_SIZE               16    /* (16)                            */

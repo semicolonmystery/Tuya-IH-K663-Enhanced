@@ -8,12 +8,14 @@ This firmware replaces the stock Tuya firmware entirely. It exposes a rich
 single-button gesture set (click / hold up to triple, plus a pairing/reset
 gesture), drives bound lights directly over On/Off / Level / Color-Temperature
 clusters, publishes gesture `action`s to Zigbee2MQTT, reports coin-cell battery
-level, supports Z2M-initiated OTA, and is a proper sleepy end device with
-correct stack-driven rejoin.
+level, supports Z2M-initiated OTA, and is a proper sleepy end device that hunts
+for a new parent when you carry it out of range of its old one.
 
 > Status: gestures, bindings, battery, deep sleep, rejoin, offline caching and
-> OTA are implemented and hardware-tested. Long-run coin-cell battery life has
-> not been measured yet. See `PLAN.md` for milestones.
+> OTA are implemented and hardware-tested. The 30 min idle poll and the bounded
+> reparenting campaign (F9b) are new in v0.23 and **not yet hardware-verified**.
+> Long-run coin-cell battery life has not been measured yet. See `PLAN.md` for
+> milestones.
 
 ## Requirements per action
 
@@ -67,6 +69,7 @@ clicks chain within `MULTI_CLICK_WINDOW_MS` (300 ms).
 | 2 clicks + hold | `double_hold_start` / `double_hold_stop` | Colour-temperature **Move**, direction alternates | faster ramp |
 | 3 clicks + hold | `triple_hold_start` / `triple_hold_stop` | — (publish only) | slow ramp |
 | 4 clicks + hold 5 s | — (local) | — | fast blink = pairing | 
+| 5 clicks | — (local) | — | one blink per rejoin attempt | 
 | Hold 20 s | — (local) | Move stopped, gesture abandoned | off |
 
 Every `*_hold_stop` also publishes **`action_duration`** (ms). It persists in Z2M
@@ -79,6 +82,12 @@ This is a **true factory reset**: the device broadcasts a Leave, clears the
 binding table and erases NV (network keys, bindings, reporting configuration),
 then reboots factory-new and pairs from scratch. Everything configured before is
 forgotten — you will need to re-create your light bindings afterwards.
+
+**Reconnect (5 clicks)** tells the remote to go looking for a new parent right
+now — see [Losing and finding a parent](#losing-and-finding-a-parent). It does
+*not* unpair anything. Note it is one click past the reset prefix, so if you aim
+for a factory reset and let go of the last press too early you get a harmless
+reconnect attempt instead of a reset.
 
 A factory-new device (fresh flash, or just after a reset) pairs automatically on
 boot for `PAIR_WINDOW_MS`, with the pairing LED running. If no network is found
@@ -207,13 +216,22 @@ reconnect-speed vs battery-life tradeoff:
 
 | Define | Default | Effect |
 |---|---|---|
-| `POLL_CTRL_LONG_POLL_S` | `60` | How often the device wakes to poll its parent. **The dominant battery knob** — `CFG_POLL_RATE_NORMAL_MS` is derived from it so the two can't disagree. Lower = shorter worst-case latency for anything the coordinator pushes; higher = fewer wakeups. |
-| `CFG_ZDO_MAX_REJOIN_BACKOFF_TIME` | `3600` | Ceiling on rejoin backoff when the network is gone. Lower = reconnects sooner after an outage; higher = a permanently-unreachable network can't flatten the cell by retrying. |
+| `POLL_CTRL_LONG_POLL_S` | `1800` | How often the device wakes to poll its parent. **The dominant battery knob** — `CFG_POLL_RATE_NORMAL_MS` is derived from it so the two can't disagree. 30 min sits far under the ~256 min parent child-aging timeout, so the device stays a child while barely using the radio. Raising it further also slows unattended parent-loss detection, which is measured in missed polls. |
+| `REJOIN_CAMPAIGN_ATTEMPTS` | `5` | How many rejoin attempts one campaign makes before stopping completely. Higher = better odds of reconnecting unattended; lower = less radio time somewhere with no network in range. |
+| `REJOIN_ATTEMPT_INTERVAL_MS` | `60000` | Gap between attempts within a campaign. |
 
 Others worth knowing:
 
-- `CFG_ZDO_REJOIN_BACKOFF_TIME` (30 s initial backoff), `CFG_ZDO_REJOIN_TIMES`,
-  `CFG_ZDO_REJOIN_DURATION` — shape of the retry burst before backoff grows.
+- `REJOIN_TRIGGER_CLICKS` (5) — the click count that forces a reconnect.
+- `REJOIN_FAST_POLL_S` (8) — fast-poll window opened around each rejoin attempt
+  so the Rejoin Response is actually collected.
+- `POLL_CTRL_LONG_POLL_MIN_S` (5 s) — floor a coordinator may write via *Set Long
+  Poll Interval*, so a misbehaving one cannot pin the radio on.
+- `CFG_ZDO_MAX_REJOIN_BACKOFF_TIME` (1800 s), `CFG_ZDO_REJOIN_BACKOFF_TIME`
+  (30 s), `CFG_ZDO_REJOIN_TIMES`, `CFG_ZDO_REJOIN_DURATION` — the **stack's** own
+  backoff, now only a fallback behind the campaign above.
+- `CFG_ZDO_MAX_PARENT_THRESHOLD_RETRY` (3) — missed polls before the stack calls
+  the parent lost. This is in *polls*, so it scales with `POLL_CTRL_LONG_POLL_S`.
 - `BATTERY_MEASURE_MIN_INTERVAL_S` (1 h) / `BATTERY_REPORT_INTERVAL_S` (6 h).
 - `HOLD_MS` (400), `MULTI_CLICK_WINDOW_MS` (300), `DEBOUNCE_MS` (20) — gesture
   feel. Raising `MULTI_CLICK_WINDOW_MS` makes multi-clicks easier to land but
@@ -232,9 +250,10 @@ messages the coordinator wants to push *to* the device.
 
 A remote is *transmit*-driven: it sends when you press a button and otherwise
 only polls to keep the parent link alive and collect anything queued for it. So
-the idle poll dominates the energy budget, and it is set slow (60 s). Going
-much slower buys little — past roughly a minute the deep-sleep current dominates
-and you are trading responsiveness for almost nothing.
+the idle poll dominates the energy budget, and it is set slow: **30 min**, the
+same value as the EFR32 sibling project. That is far under the ~256 min parent
+child-aging timeout, so the device comfortably stays a child while spending
+almost no time with the radio on.
 
 Because a slow-polling device is hard for a coordinator to reach (a parent only
 buffers a message for it for a few seconds), the firmware implements the
@@ -244,9 +263,10 @@ battery remotes use:
 | Attribute | Default | Meaning |
 |---|---|---|
 | `checkinInterval` | 1 h | How often the device announces itself to the coordinator |
-| `longPollInterval` | 60 s | Idle poll rate |
+| `longPollInterval` | 30 min | Idle poll rate |
 | `shortPollInterval` | 250 ms | Poll rate during a fast-poll window |
 | `fastPollTimeout` | 10 s | Default length of a fast-poll window |
+| `longPollIntervalMin` | 5 s | Floor a coordinator may write, so it cannot pin the radio on |
 
 On each check-in the coordinator may answer *"start fast polling"*, which opens a
 short window where it can actually talk to the device (attribute reads, config,
@@ -257,7 +277,7 @@ bound during `configure` so check-ins reach the coordinator.
 `POLL_CTRL_JOIN_FAST_POLL_S` (120 s) before dropping to the idle rate. Z2M's
 interview and especially `configure()` (binds + reporting setup) are
 coordinator→device requests, and a parent only buffers data for a sleepy child
-for about 7.7 s — at a 60 s idle poll those requests expire before the device
+for about 7.7 s — at the idle poll those requests expire long before the device
 ever asks for them, and `configure` silently never completes. The window costs
 one burst of polls per pairing.
 
@@ -270,7 +290,7 @@ Two safety properties are enforced in firmware, both deliberately:
   mid-download can't drop the device back to the slow poll and stall it.
 
 A slow poll is safe against parent child-aging: the Zigbee end-device timeout
-default is 256 minutes, far longer than any poll interval here.
+default is 256 minutes, comfortably longer than the 30 min poll.
 
 > Practical consequence, and it matches how commercial battery remotes behave:
 > **press the button** to wake the device when you want Z2M to talk to it —
@@ -280,6 +300,44 @@ default is 256 minutes, far longer than any poll interval here.
 > `Reconfigure`) does not complete, re-pair the device instead: 4 clicks + a 5 s
 > hold. Re-joining opens the 120 s commissioning window above, which is the
 > reliable way to give Z2M a long enough conversation.
+
+### Losing and finding a parent
+
+A sleepy end device talks to the mesh only through one **parent** router. Carry
+the remote out of range of that parent and it goes quiet — it has to notice, then
+attach to a different router. Two things shape how that goes.
+
+**Noticing** is counted in *missed polls*, not in wall-clock time: the stack
+gives up on the parent after `CFG_ZDO_MAX_PARENT_THRESHOLD_RETRY` (3) failed
+polls, so at the 30 min idle poll that is roughly 90 minutes unattended. This is
+the direct cost of a long poll, and it is why the button matters:
+
+**Waking the remote is what starts the search.** Any press while it cannot reach
+the network — and the explicit **5-click reconnect** gesture even when it thinks
+it still can — starts a *campaign* immediately: `REJOIN_CAMPAIGN_ATTEMPTS` (5)
+rejoin attempts, `REJOIN_ATTEMPT_INTERVAL_MS` (60 s) apart, one LED blink each.
+So in practice you walk into the other room, press the button, and it reconnects
+within about a minute rather than waiting to notice on its own.
+
+A campaign then **stops completely**. A remote left somewhere with no network in
+range must not scan itself flat, so it goes silent until something wakes it
+again. Each attempt:
+
+- alternates between a **secure** rejoin (keeps the network key) and a
+  **trust-center** rejoin — trying only one mode forever is a common way for a
+  device to stay offline permanently;
+- stops preferring the previous parent after the first try, so a nearer router
+  gets a real chance;
+- opens a short fast-poll window, because the Rejoin Response comes back through
+  the parent's indirect queue and only survives there ~7.7 s.
+
+> Firmware before v0.23 handed this to the stack's own backoff, which grows
+> toward `CFG_ZDO_MAX_REJOIN_BACKOFF_TIME`. Once the device had been away a
+> while its next attempt could be half an hour out, and a button press *joined*
+> that queue instead of jumping it — so a remote carried to another room could
+> sit offline for hours. The SDK's own end-device samples avoid the same trap:
+> every `zb_rejoinReqWithBackOff()` call in `apps/sampleSwitch` is commented out
+> in favour of a plain `zb_rejoinReq()` on an app-owned timer.
 
 ## Acceptance checklist
 
@@ -303,14 +361,23 @@ Run against a flashed device joined to Z2M, watching `./debug.sh`.
    Verify `action_duration` still updates while bound (this needs the deferred
    duration report — see `HOLD_DURATION_REPORT_DELAY_MS`).
 6. **Sleep (F4)** — when idle the UART emits one wake transient per poll interval
-   (~60 s by default). Confirm the cadence tracks `POLL_CTRL_LONG_POLL_S`.
+   (~30 min by default). Confirm the cadence tracks `POLL_CTRL_LONG_POLL_S`;
+   anything above ~100 s also proves the SDK's long-sleep path is being taken.
 6b. **Poll Control (F4b)** — `poll=checkin` appears at the check-in interval. If
    the coordinator opens a fast-poll window you should see `poll=fast` followed
    by `poll=long` when it expires (never `poll=fast` left standing).
 7. **Stuck button (F4)** — hold for 20 s → `gesture=stuck`, LED off, device
    returns to sleeping instead of staying awake.
 8. **Rejoin (F9)** — power the coordinator down and back up; the device rejoins
-   without re-pairing. A press while offline logs `rejoin=button`.
+   without re-pairing. A press while offline logs `rejoin=start why=button`
+   **immediately**, not after a backoff.
+8b. **Reparenting (F9b)** — the one that matters in a real house. Pair in one
+   room, carry the remote to a room served by a *different* router, and press the
+   button once. Expect `rejoin=start why=gesture|button`, then up to five
+   `rejoin=try n=… mode=sec|insec` lines a minute apart, with `mode` alternating,
+   and a reconnect on a new parent (Z2M's network map, or its `changed parent`
+   log line). If nothing is in range, expect `rejoin=giveup` and then **silence** —
+   a campaign that keeps scanning is the failure to look for here.
 9. **Offline cache (F5)** — with the coordinator down, perform several gestures;
    on reconnect `cache=flush` appears and the actions arrive as a few messages,
    not a verbatim replay.
